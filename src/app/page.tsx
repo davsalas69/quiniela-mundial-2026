@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { Prisma } from '@prisma/client';
+import { Match, Prediction, Score } from '@prisma/client';
 import Link from 'next/link';
 import { 
   Award, 
@@ -14,12 +14,10 @@ import {
 
 export const revalidate = 0; // Disable caching to ensure fresh DB reads on navigations
 
-type MatchWithData = Prisma.MatchGetPayload<{
-  include: {
-    prediction: true;
-    score: true;
-  };
-}>;
+export type MatchWithData = Match & {
+  prediction: Prediction | null;
+  score: Score | null;
+};
 
 export default async function DashboardPage() {
   const matches: MatchWithData[] = await prisma.match.findMany({

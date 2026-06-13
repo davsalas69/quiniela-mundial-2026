@@ -1,14 +1,12 @@
 import { prisma } from '@/lib/db';
-import { Prisma } from '@prisma/client';
+import { Match, Prediction } from '@prisma/client';
 import PredictionsClient from './PredictionsClient';
 
 export const revalidate = 0; // Disable cache for fresh DB reads
 
-type MatchWithPrediction = Prisma.MatchGetPayload<{
-  include: {
-    prediction: true;
-  };
-}>;
+export type MatchWithPrediction = Match & {
+  prediction: Prediction | null;
+};
 
 export default async function PredictionsPage() {
   const matches: MatchWithPrediction[] = await prisma.match.findMany({
