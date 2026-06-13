@@ -1,0 +1,54 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Match {
+  id                  String       @id @default(uuid())
+  externalApiId       String?
+  stage               String       // Enum representation: GROUP_STAGE, ROUND_OF_32, etc.
+  groupName           String?      // Optional, e.g. "Grupo A", "Grupo B"
+  homeTeam            String
+  awayTeam            String
+  kickoffAt           DateTime?
+  status              String       @default("SCHEDULED") // Enum: SCHEDULED, IN_PROGRESS, FINISHED, MANUAL_PROJECTION
+  actualHomeScore     Int?
+  actualAwayScore     Int?
+  actualHomePenalties Int?
+  actualAwayPenalties Int?
+  actualWinner        String?      // Name of the team that won (useful for draws in final stage)
+  resultSource        String       @default("NONE") // Enum: NONE, API, MANUAL_REAL, MANUAL_SIMULATION
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  
+  prediction          Prediction?
+  score               Score?
+}
+
+model Prediction {
+  id                     String   @id @default(uuid())
+  matchId                String   @unique
+  match                  Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  predictedHomeScore     Int?
+  predictedAwayScore     Int?
+  predictedHomePenalties Int?
+  predictedAwayPenalties Int?
+  predictedWinner        String?  // Name of the predicted winner (for final stage draws)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+model Score {
+  id           String   @id @default(uuid())
+  matchId      String   @unique
+  match        Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  points       Int
+  reason       String
+  calculatedAt DateTime @default(now())
+}

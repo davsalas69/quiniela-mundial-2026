@@ -1,0 +1,37 @@
+import { prisma } from '@/lib/db';
+import { Prisma } from '@prisma/client';
+import ResultsClient from './ResultsClient';
+
+export const revalidate = 0; // Disable cache for fresh DB reads
+
+type MatchWithPrediction = Prisma.MatchGetPayload<{
+  include: {
+    prediction: true;
+  };
+}>;
+
+export default async function ResultsPage() {
+  const matches: MatchWithPrediction[] = await prisma.match.findMany({
+    include: {
+      prediction: true,
+    },
+    orderBy: [
+      { kickoffAt: 'asc' },
+    ],
+  });
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-3xl font-black tracking-tight bg-gradient-to-r from-white via-zinc-200 to-zinc-500 bg-clip-text text-transparent">
+          RESULTADOS DEL TORNEO
+        </h2>
+        <p className="text-zinc-400 text-sm font-medium">
+          Carga los marcadores reales para calcular tus puntos, o simula escenarios futuros seleccionando el tipo "Simulado" para ver proyecciones de puntaje.
+        </p>
+      </div>
+
+      <ResultsClient initialMatches={matches} />
+    </div>
+  );
+}

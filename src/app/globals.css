@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+:root {
+  --background: #07070b; /* Fondo ultra oscuro */
+  --foreground: #f4f4f5; /* Texto principal claro */
+  
+  --card: #0f0f15; /* Tarjetas oscuras con un tinte azulado */
+  --card-border: rgba(255, 255, 255, 0.05);
+  
+  --primary: #6d28d9; /* Violeta 700 */
+  --primary-glow: rgba(109, 40, 217, 0.15);
+  --accent: #10b981; /* Esmeralda para puntos y aciertos */
+  --accent-glow: rgba(16, 185, 129, 0.15);
+  --warning: #f59e0b; /* Ámbar para simulaciones y alertas */
+  --warning-glow: rgba(245, 158, 11, 0.15);
+  
+  --border: #1e1e24; /* Bordes suaves */
+  --muted: #71717a; /* Texto atenuado */
+  --muted-bg: #13131a; /* Fondos secundarios */
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* Custom Utilities for Premium Visual Effects */
+.glass {
+  background: rgba(15, 15, 21, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glow-primary {
+  box-shadow: 0 0 20px 0 var(--primary-glow);
+}
+
+.glow-accent {
+  box-shadow: 0 0 20px 0 var(--accent-glow);
+}
+
+.glow-warning {
+  box-shadow: 0 0 20px 0 var(--warning-glow);
+}
+
+/* Smooth animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+/* Form controls */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}

@@ -1,0 +1,28 @@
+import { prisma } from '@/lib/db';
+import { Match } from '@prisma/client';
+import SettingsClient from './SettingsClient';
+
+export const revalidate = 0; // Disable cache for fresh DB reads
+
+export default async function SettingsPage() {
+  const matches: Match[] = await prisma.match.findMany({
+    orderBy: [
+      { kickoffAt: 'asc' },
+    ],
+  });
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-3xl font-black tracking-tight bg-gradient-to-r from-white via-zinc-200 to-zinc-500 bg-clip-text text-transparent">
+          CONFIGURACIÓN Y UTILERÍAS
+        </h2>
+        <p className="text-zinc-400 text-sm font-medium">
+          Controla las operaciones globales de base de datos, exporta copias de seguridad de tus datos, o administra manualmente el calendario de partidos.
+        </p>
+      </div>
+
+      <SettingsClient initialMatches={matches} />
+    </div>
+  );
+}
