@@ -823,10 +823,10 @@ describe('Excel Predictions Import Tests', () => {
     expect(report2.items[0].status).toBe('AMBIGUOUS');
   });
 
-  test('Debería bloquear la actualización si el partido ya comenzó o terminó', async () => {
+  test('Debería permitir la vista previa y confirmación de partidos históricos (acción administrativa)', async () => {
     const m1 = await prisma.match.create({
       data: {
-        externalApiId: 'started-1',
+        externalApiId: 'admin-hist-1',
         stage: 'GROUP_STAGE',
         groupName: 'Grupo B',
         homeTeam: 'Canadá',
@@ -839,69 +839,212 @@ describe('Excel Predictions Import Tests', () => {
 
     const m2 = await prisma.match.create({
       data: {
-        externalApiId: 'finished-1',
+        externalApiId: 'admin-hist-2',
         stage: 'GROUP_STAGE',
         groupName: 'Grupo B',
         homeTeam: 'Canadá',
         awayTeam: 'El Salvador',
         kickoffAt: new Date('2026-06-12T12:00:00Z'),
         status: 'FINISHED',
-        resultSource: 'NONE',
+        resultSource: 'MANUAL_REAL',
+        actualHomeScore: 2,
+        actualAwayScore: 1,
       }
     });
 
     const rows = [
       ['#', 'FECHA', 'EQUIPO 1', 'GRUPO', 'RESULTADOS', '', 'EQUIPO 2'],
       [1, 46185.5, 'Canadá', 'B', 1, 0, 'Honduras'],
-      [2, 46185.5, 'Canadá', 'B', 2, 0, 'El Salvador'],
+      [2, 46185.5, 'Canadá', 'B', 2, 1, 'El Salvador'],
     ];
 
     const buffer = createMockWorkbookBuffer(rows);
     const report = await previewPredictionImport(buffer);
 
-    expect(report.blockedCount).toBe(2);
-    expect(report.items[0].status).toBe('BLOCKED');
-    expect(report.items[1].status).toBe('BLOCKED');
+    expect(report.blockedCount).toBe(0); // No longer blocked!
+    expect(report.newHistoryCount).toBe(2);
+    expect(report.items[0].status).toBe('VALID');
+    expect(report.items[0].isAdministrative).toBe(true);
+    expect(report.items[0].action).toBe('CREATE_RECALCULATE');
+    expect(report.items[1].status).toBe('VALID');
+    expect(report.items[1].isAdministrative).toBe(true);
+    expect(report.items[1].action).toBe('CREATE_RECALCULATE');
+
+    // Confirm import administratively
+    const result = await confirmPredictionImport(buffer);
+    expect(result.success).toBe(true);
+    expect(result.createdHistoryCount).toBe(2);
+    expect(result.recalculatedCount).toBe(1); // Solo m2 tiene resultado real (2-1)
+
+    // Check score of m2 (2-1 pred vs 2-1 actual = exact = 6 pts)
+    const score = await prisma.score.findUnique({
+      where: { matchId: m2.id }
+    });
+    expect(score).toBeDefined();
+    expect(score?.points).toBe(6);
   });
 
-  test('Debería guardar en base de datos de forma atómica y no tocar resultados reales', async () => {
-    const m1 = await prisma.match.create({
+  test('Debería actualizar predicción de partido histórico y recalcular puntos', async () => {
+    const m = await prisma.match.create({
       data: {
-        externalApiId: 'atom-1',
+        externalApiId: 'admin-hist-update',
         stage: 'GROUP_STAGE',
-        groupName: 'Grupo A',
-        homeTeam: 'México',
-        awayTeam: 'Sudáfrica',
-        kickoffAt: new Date('2026-06-11T18:00:00Z'),
-        status: 'SCHEDULED',
-        resultSource: 'NONE',
-        actualHomeScore: 4,
-        actualAwayScore: 4,
+        groupName: 'Grupo B',
+        homeTeam: 'Alemania',
+        awayTeam: 'Francia',
+        kickoffAt: new Date('2026-06-12T12:00:00Z'),
+        status: 'FINISHED',
+        resultSource: 'MANUAL_REAL',
+        actualHomeScore: 2,
+        actualAwayScore: 0,
+        prediction: {
+          create: {
+            predictedHomeScore: 1,
+            predictedAwayScore: 1,
+          }
+        }
       }
     });
 
     const rows = [
       ['#', 'FECHA', 'EQUIPO 1', 'GRUPO', 'RESULTADOS', '', 'EQUIPO 2'],
-      [1, 46184.583333333336, 'México', 'A', 2, 1, 'Sudáfrica'],
+      [1, 46185.5, 'Alemania', 'B', 2, 0, 'Francia'],
     ];
 
     const buffer = createMockWorkbookBuffer(rows);
     const result = await confirmPredictionImport(buffer);
 
     expect(result.success).toBe(true);
-    expect(result.createdCount).toBe(1);
+    expect(result.updatedHistoryCount).toBe(1);
+    expect(result.recalculatedCount).toBe(1);
+
+    const score = await prisma.score.findUnique({
+      where: { matchId: m.id }
+    });
+    expect(score?.points).toBe(6); // Exact match score!
+  });
+
+  test('Debería validar puntajes según las reglas (exacto=6, tendencia+total=5, tendencia=4, total=1)', async () => {
+    const { calculateMatchScore } = await import('../lib/scoring');
+
+    // Rule 2: Resultado exacto = 6 puntos
+    const resExact = calculateMatchScore(
+      { predictedHomeScore: 2, predictedAwayScore: 1, predictedHomePenalties: null, predictedAwayPenalties: null, predictedWinner: null },
+      { stage: 'GROUP_STAGE', homeTeam: 'A', awayTeam: 'B', actualHomeScore: 2, actualAwayScore: 1, actualHomePenalties: null, actualAwayPenalties: null, actualWinner: null }
+    );
+    expect(resExact.points).toBe(6);
+
+    // Rule 3: Ganador correcto + sumatoria total de goles correcta = 5 puntos
+    const resTendencyTotal = calculateMatchScore(
+      { predictedHomeScore: 2, predictedAwayScore: 1, predictedHomePenalties: null, predictedAwayPenalties: null, predictedWinner: null },
+      { stage: 'GROUP_STAGE', homeTeam: 'A', awayTeam: 'B', actualHomeScore: 3, actualAwayScore: 0, actualHomePenalties: null, actualAwayPenalties: null, actualWinner: null }
+    );
+    expect(resTendencyTotal.points).toBe(5);
+
+    // Rule 4: Solo ganador correcto = 4 puntos
+    const resTendency = calculateMatchScore(
+      { predictedHomeScore: 2, predictedAwayScore: 1, predictedHomePenalties: null, predictedAwayPenalties: null, predictedWinner: null },
+      { stage: 'GROUP_STAGE', homeTeam: 'A', awayTeam: 'B', actualHomeScore: 1, actualAwayScore: 0, actualHomePenalties: null, actualAwayPenalties: null, actualWinner: null }
+    );
+    expect(resTendency.points).toBe(4);
+
+    // Rule 5: Solo sumatoria total de goles correcta = 1 punto
+    const resTotal = calculateMatchScore(
+      { predictedHomeScore: 2, predictedAwayScore: 1, predictedHomePenalties: null, predictedAwayPenalties: null, predictedWinner: null },
+      { stage: 'GROUP_STAGE', homeTeam: 'A', awayTeam: 'B', actualHomeScore: 0, actualAwayScore: 3, actualHomePenalties: null, actualAwayPenalties: null, actualWinner: null }
+    );
+    expect(resTotal.points).toBe(1);
+
+    // Rule 1: Penales exactos en fase final = 8 puntos
+    const resPenalties = calculateMatchScore(
+      { predictedHomeScore: 1, predictedAwayScore: 1, predictedHomePenalties: 4, predictedAwayPenalties: 3, predictedWinner: 'A' },
+      { stage: 'ROUND_OF_16', homeTeam: 'A', awayTeam: 'B', actualHomeScore: 1, actualAwayScore: 1, actualHomePenalties: 4, actualAwayPenalties: 3, actualWinner: 'A' }
+    );
+    expect(resPenalties.points).toBe(8);
+  });
+
+  test('No debería modificar resultados reales, ni penales, ni resultSource del partido', async () => {
+    const m = await prisma.match.create({
+      data: {
+        externalApiId: 'admin-hist-integrity',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo A',
+        homeTeam: 'Uruguay',
+        awayTeam: 'Chile',
+        kickoffAt: new Date('2026-06-12T12:00:00Z'),
+        status: 'FINISHED',
+        resultSource: 'MANUAL_REAL',
+        actualHomeScore: 3,
+        actualAwayScore: 2,
+        actualHomePenalties: 5,
+        actualAwayPenalties: 4,
+      }
+    });
+
+    const rows = [
+      ['#', 'FECHA', 'EQUIPO 1', 'GRUPO', 'RESULTADOS', '', 'EQUIPO 2'],
+      [1, 46185.5, 'Uruguay', 'A', 1, 1, 'Chile'],
+    ];
+
+    const buffer = createMockWorkbookBuffer(rows);
+    const result = await confirmPredictionImport(buffer);
+
+    expect(result.success).toBe(true);
 
     const dbMatch = await prisma.match.findUnique({
-      where: { id: m1.id },
+      where: { id: m.id }
+    });
+
+    expect(dbMatch?.actualHomeScore).toBe(3);
+    expect(dbMatch?.actualAwayScore).toBe(2);
+    expect(dbMatch?.actualHomePenalties).toBe(5);
+    expect(dbMatch?.actualAwayPenalties).toBe(4);
+    expect(dbMatch?.resultSource).toBe('MANUAL_REAL');
+    expect(dbMatch?.status).toBe('FINISHED');
+    expect(dbMatch?.homeTeam).toBe('Uruguay');
+    expect(dbMatch?.awayTeam).toBe('Chile');
+  });
+
+  test('Debería hacer rollback de la predicción si falla el recálculo', async () => {
+    const m = await prisma.match.create({
+      data: {
+        externalApiId: 'admin-hist-rollback',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo B',
+        homeTeam: 'Argentina',
+        awayTeam: 'Brasil',
+        kickoffAt: new Date('2026-06-12T12:00:00Z'),
+        status: 'FINISHED',
+        resultSource: 'MANUAL_REAL',
+        actualHomeScore: 1,
+        actualAwayScore: 0,
+      }
+    });
+
+    const rows = [
+      ['#', 'FECHA', 'EQUIPO 1', 'GRUPO', 'RESULTADOS', '', 'EQUIPO 2'],
+      [1, 46185.5, 'Argentina', 'B', 2, 0, 'Brasil'],
+    ];
+
+    const buffer = createMockWorkbookBuffer(rows);
+
+    // Mock unique constraint violation or DB failure by intercepting tx.score.upsert
+    // Let's use a fail-fast approach: we make calculateMatchScore throw an error to simulate recalculation failure
+    const scoringModule = await import('../lib/scoring');
+    const spy = vi.spyOn(scoringModule, 'calculateMatchScore').mockImplementationOnce(() => {
+      throw new Error('Simulated score calculation error');
+    });
+
+    await expect(confirmPredictionImport(buffer)).rejects.toThrow('Simulated score calculation error');
+
+    // Confirm rollback: prediction should NOT be in the DB
+    const dbMatch = await prisma.match.findUnique({
+      where: { id: m.id },
       include: { prediction: true }
     });
 
-    expect(dbMatch?.prediction).toBeDefined();
-    expect(dbMatch?.prediction?.predictedHomeScore).toBe(2);
-    expect(dbMatch?.prediction?.predictedAwayScore).toBe(1);
-
-    expect(dbMatch?.actualHomeScore).toBe(4);
-    expect(dbMatch?.actualAwayScore).toBe(4);
-    expect(dbMatch?.resultSource).toBe('NONE');
+    expect(dbMatch?.prediction).toBeNull();
+    
+    spy.mockRestore();
   });
 });

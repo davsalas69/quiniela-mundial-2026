@@ -138,6 +138,8 @@ export default function SettingsClient({
   const [predictionError, setPredictionError] = useState<string | null>(null);
   const [predictionStatus, setPredictionStatus] = useState<'IDLE' | 'ANALYZING' | 'PREVIEW' | 'IMPORTING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [predictionResult, setPredictionResult] = useState<any | null>(null);
+  const [adminAuthorized, setAdminAuthorized] = useState(false);
+  const hasAdminMatches = !!predictionPreview?.items?.some((item: any) => item.isAdministrative);
 
   const handlePredictionFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -193,8 +195,6 @@ export default function SettingsClient({
       if (res.success && res.result) {
         setPredictionResult(res.result);
         setPredictionStatus('SUCCESS');
-        // Reload page to refresh predictions
-        window.location.reload();
       } else {
         setPredictionError(res.message || 'Error al confirmar la importación.');
         setPredictionStatus('ERROR');
@@ -206,11 +206,16 @@ export default function SettingsClient({
   };
 
   const handleCancelPredictionImport = () => {
+    const wasSuccess = predictionStatus === 'SUCCESS';
     setPredictionFile(null);
     setPredictionPreview(null);
     setPredictionError(null);
     setPredictionResult(null);
     setPredictionStatus('IDLE');
+    setAdminAuthorized(false);
+    if (wasSuccess) {
+      window.location.reload();
+    }
   };
 
   // Acciones de Base de Datos
@@ -763,7 +768,7 @@ export default function SettingsClient({
         {predictionStatus === 'PREVIEW' && predictionPreview && (
           <div className="space-y-5">
             {/* Summary statistics grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 text-xs">
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
                 <span className="text-zinc-500 block text-[9px] uppercase font-bold tracking-wider">Filas Leídas</span>
                 <span className="text-base font-black text-zinc-200 mt-1">{predictionPreview.totalRows}</span>
@@ -773,12 +778,24 @@ export default function SettingsClient({
                 <span className="text-base font-black text-emerald-400 mt-1">{predictionPreview.matchedCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
-                <span className="text-amber-500 block text-[9px] uppercase font-bold tracking-wider">Nuevas</span>
-                <span className="text-base font-black text-amber-400 mt-1">{predictionPreview.newCount}</span>
+                <span className="text-amber-500 block text-[9px] uppercase font-bold tracking-wider">Creados (Fut)</span>
+                <span className="text-base font-black text-amber-400 mt-1">{predictionPreview.newFutureCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
-                <span className="text-blue-500 block text-[9px] uppercase font-bold tracking-wider">Actualizar</span>
-                <span className="text-base font-black text-blue-400 mt-1">{predictionPreview.updateCount}</span>
+                <span className="text-blue-500 block text-[9px] uppercase font-bold tracking-wider">Act. (Fut)</span>
+                <span className="text-base font-black text-blue-400 mt-1">{predictionPreview.updateFutureCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
+                <span className="text-orange-500 block text-[9px] uppercase font-bold tracking-wider">Creados (Hist)</span>
+                <span className="text-base font-black text-orange-400 mt-1">{predictionPreview.newHistoryCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
+                <span className="text-violet-500 block text-[9px] uppercase font-bold tracking-wider">Act. (Hist)</span>
+                <span className="text-base font-black text-violet-400 mt-1">{predictionPreview.updateHistoryCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
+                <span className="text-teal-500 block text-[9px] uppercase font-bold tracking-wider">Recalculados</span>
+                <span className="text-base font-black text-teal-400 mt-1">{predictionPreview.recalculatedCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
                 <span className="text-rose-500 block text-[9px] uppercase font-bold tracking-wider">No Encontrados</span>
@@ -789,8 +806,12 @@ export default function SettingsClient({
                 <span className="text-base font-black text-indigo-400 mt-1">{predictionPreview.ambiguousCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
-                <span className="text-zinc-600 block text-[9px] uppercase font-bold tracking-wider">Bloqueados</span>
-                <span className="text-base font-black text-zinc-500 mt-1">{predictionPreview.blockedCount}</span>
+                <span className="text-red-500 block text-[9px] uppercase font-bold tracking-wider">Inválidos</span>
+                <span className="text-base font-black text-red-400 mt-1">{predictionPreview.invalidCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
+                <span className="text-zinc-600 block text-[9px] uppercase font-bold tracking-wider">Errores</span>
+                <span className="text-base font-black text-zinc-500 mt-1">0</span>
               </div>
             </div>
 
@@ -839,24 +860,27 @@ export default function SettingsClient({
                       </td>
                       <td className="py-2.5 px-3 text-center">
                         <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase ${
+                          item.isAdministrative ? 'bg-amber-950/45 text-amber-400 border border-amber-900/30' :
                           item.status === 'VALID' ? 'bg-emerald-950/45 text-emerald-400 border border-emerald-900/30' :
                           item.status === 'INVALID' ? 'bg-rose-950/45 text-rose-400 border border-rose-900/30' :
                           item.status === 'NOT_FOUND' ? 'bg-zinc-800 text-zinc-400 border border-zinc-700' :
                           item.status === 'AMBIGUOUS' ? 'bg-indigo-950/45 text-indigo-400 border border-indigo-900/30' :
-                          'bg-amber-950/45 text-amber-400 border border-amber-900/30' // BLOCKED
+                          'bg-amber-950/45 text-amber-400 border border-amber-900/30'
                         }`}>
-                          {item.status}
+                          {item.isAdministrative ? 'IMPORTACIÓN ADMINISTRATIVA' : item.status}
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-center">
                         <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
-                          item.action === 'CREATE' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                          item.action === 'UPDATE' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
+                          (item.action === 'CREATE' || item.action === 'CREATE_RECALCULATE') ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                          (item.action === 'UPDATE' || item.action === 'UPDATE_RECALCULATE') ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
                           item.action === 'ERROR' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
                           'bg-zinc-800/40 text-zinc-500 border border-zinc-800'
                         } border`}>
                           {item.action === 'CREATE' ? 'CREAR' :
+                           item.action === 'CREATE_RECALCULATE' ? 'CREAR Y RECALCULAR' :
                            item.action === 'UPDATE' ? 'ACTUALIZAR' :
+                           item.action === 'UPDATE_RECALCULATE' ? 'ACTUALIZAR Y RECALCULAR' :
                            item.action === 'ERROR' ? 'ERROR' : 'IGNORAR'}
                         </span>
                       </td>
@@ -866,11 +890,43 @@ export default function SettingsClient({
               </table>
             </div>
 
+            {/* Warning and Checkbox for Administrative Imports */}
+            {hasAdminMatches && (
+              <div className="p-4 border border-amber-500/30 rounded-xl bg-amber-500/5 space-y-3">
+                <div className="flex items-start space-x-2.5 text-xs text-amber-300">
+                  <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-amber-400">Importación Administrativa Requerida</p>
+                    <p className="text-amber-400/80 mt-1">
+                      Este archivo contiene predicciones históricas. Al confirmar, se modificará el historial y se recalcularán los puntos.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2 pt-1">
+                  <input
+                    type="checkbox"
+                    id="admin-authorization-checkbox"
+                    checked={adminAuthorized}
+                    onChange={(e) => setAdminAuthorized(e.target.checked)}
+                    className="rounded border-[#272733] bg-[#0a0a0f] text-[#34d399] focus:ring-emerald-500 focus:ring-offset-0 h-4 w-4 cursor-pointer"
+                  />
+                  <label htmlFor="admin-authorization-checkbox" className="text-xs text-zinc-300 font-bold select-none cursor-pointer">
+                    He revisado los pronósticos históricos y autorizo su actualización.
+                  </label>
+                </div>
+              </div>
+            )}
+
             {/* Confirm Actions */}
             <div className="flex space-x-3.5 pt-2">
               <button
                 onClick={handleConfirmPredictionImport}
-                className="px-5 py-2.5 rounded-lg bg-[#059669] hover:bg-[#047857] text-xs font-bold text-white transition-all duration-200 cursor-pointer flex items-center space-x-1.5 shadow-lg shadow-emerald-950/20"
+                disabled={hasAdminMatches && !adminAuthorized}
+                className={`px-5 py-2.5 rounded-lg text-xs font-bold text-white transition-all duration-200 flex items-center space-x-1.5 shadow-lg ${
+                  hasAdminMatches && !adminAuthorized
+                    ? 'bg-zinc-800 border border-zinc-700 text-zinc-500 cursor-not-allowed shadow-none'
+                    : 'bg-[#059669] hover:bg-[#047857] shadow-emerald-950/20 cursor-pointer'
+                }`}
               >
                 <Check className="h-4 w-4" />
                 <span>Confirmar importación</span>
@@ -904,22 +960,26 @@ export default function SettingsClient({
             </div>
 
             {/* Success summary stats */}
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 text-xs">
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
-                <span className="text-emerald-400 block text-[9px] uppercase font-bold tracking-wider">Creados</span>
-                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.createdCount}</span>
+                <span className="text-emerald-400 block text-[9px] uppercase font-bold tracking-wider">Creados (Fut)</span>
+                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.createdFutureCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
-                <span className="text-blue-400 block text-[9px] uppercase font-bold tracking-wider">Actualizados</span>
-                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.updatedCount}</span>
+                <span className="text-blue-400 block text-[9px] uppercase font-bold tracking-wider">Act. (Fut)</span>
+                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.updatedFutureCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
-                <span className="text-zinc-500 block text-[9px] uppercase font-bold tracking-wider">Ignorados</span>
-                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.ignoredCount}</span>
+                <span className="text-orange-400 block text-[9px] uppercase font-bold tracking-wider">Creados (Hist)</span>
+                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.createdHistoryCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
-                <span className="text-amber-500 block text-[9px] uppercase font-bold tracking-wider">Bloqueados</span>
-                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.blockedCount}</span>
+                <span className="text-violet-400 block text-[9px] uppercase font-bold tracking-wider">Act. (Hist)</span>
+                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.updatedHistoryCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
+                <span className="text-teal-400 block text-[9px] uppercase font-bold tracking-wider">Recalculados</span>
+                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.recalculatedCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
                 <span className="text-rose-500 block text-[9px] uppercase font-bold tracking-wider">No Encontrados</span>
@@ -930,7 +990,7 @@ export default function SettingsClient({
                 <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.ambiguousCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
-                <span className="text-rose-400 block text-[9px] uppercase font-bold tracking-wider">Errores</span>
+                <span className="text-red-500 block text-[9px] uppercase font-bold tracking-wider">Inválidos / Errores</span>
                 <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.errorCount}</span>
               </div>
             </div>

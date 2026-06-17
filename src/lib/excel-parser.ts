@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import * as XLSX from 'xlsx';
 import { prisma } from './db';
+import { calculateMatchScore } from './scoring';
 
 export interface ExcelMatch {
   matchNumber: number;
@@ -329,7 +330,8 @@ export interface PredictionPreviewItem {
     status: string;
   } | null;
   status: 'VALID' | 'INVALID' | 'NOT_FOUND' | 'AMBIGUOUS' | 'BLOCKED';
-  action: 'CREATE' | 'UPDATE' | 'NONE' | 'ERROR';
+  action: 'CREATE' | 'UPDATE' | 'NONE' | 'ERROR' | 'CREATE_RECALCULATE' | 'UPDATE_RECALCULATE';
+  isAdministrative?: boolean;
   reason?: string;
 }
 
@@ -341,8 +343,11 @@ export interface PredictionPreviewReport {
   notFoundCount: number;
   ambiguousCount: number;
   blockedCount: number;
-  newCount: number;
-  updateCount: number;
+  newFutureCount: number;
+  updateFutureCount: number;
+  newHistoryCount: number;
+  updateHistoryCount: number;
+  recalculatedCount: number;
   items: PredictionPreviewItem[];
   sheetName: string;
 }
@@ -350,10 +355,12 @@ export interface PredictionPreviewReport {
 export interface PredictionConfirmReport {
   success: boolean;
   message: string;
-  createdCount: number;
-  updatedCount: number;
+  createdFutureCount: number;
+  updatedFutureCount: number;
+  createdHistoryCount: number;
+  updatedHistoryCount: number;
+  recalculatedCount: number;
   ignoredCount: number;
-  blockedCount: number;
   notFoundCount: number;
   ambiguousCount: number;
   errorCount: number;
@@ -552,8 +559,11 @@ export async function previewPredictionImport(buffer: Buffer): Promise<Predictio
   let notFoundCount = 0;
   let ambiguousCount = 0;
   let blockedCount = 0;
-  let newCount = 0;
-  let updateCount = 0;
+  let newFutureCount = 0;
+  let updateFutureCount = 0;
+  let newHistoryCount = 0;
+  let updateHistoryCount = 0;
+  let recalculatedCount = 0;
 
   for (let idx = 0; idx < dataRows.length; idx++) {
     const row = dataRows[idx];
@@ -617,25 +627,58 @@ export async function previewPredictionImport(buffer: Buffer): Promise<Predictio
       const hasStarted = dbMatch.status !== 'SCHEDULED' || (dbMatch.kickoffAt && new Date() > dbMatch.kickoffAt);
 
       if (hasStarted) {
-        blockedCount++;
-        items.push({
-          rowNumber,
-          matchNumber: normalized.matchNumber,
-          excelDate: normalized.kickoffAt ? normalized.kickoffAt.toISOString() : null,
-          homeTeam: normalized.homeTeam,
-          awayTeam: normalized.awayTeam,
-          prediction: predictionStr,
-          matchedMatch: {
-            id: dbMatch.id,
-            homeTeam: dbMatch.homeTeam,
-            awayTeam: dbMatch.awayTeam,
-            kickoffAt: dbMatch.kickoffAt ? dbMatch.kickoffAt.toISOString() : null,
-            status: dbMatch.status,
-          },
-          status: 'BLOCKED',
-          action: 'NONE',
-          reason: 'El partido ya comenzó o ha finalizado'
-        });
+        validCount++;
+        const hasPrediction = normalized.predictedHomeScore !== null && normalized.predictedAwayScore !== null;
+        
+        if (!hasPrediction) {
+          items.push({
+            rowNumber,
+            matchNumber: normalized.matchNumber,
+            excelDate: normalized.kickoffAt ? normalized.kickoffAt.toISOString() : null,
+            homeTeam: normalized.homeTeam,
+            awayTeam: normalized.awayTeam,
+            prediction: predictionStr,
+            matchedMatch: {
+              id: dbMatch.id,
+              homeTeam: dbMatch.homeTeam,
+              awayTeam: dbMatch.awayTeam,
+              kickoffAt: dbMatch.kickoffAt ? dbMatch.kickoffAt.toISOString() : null,
+              status: dbMatch.status,
+            },
+            status: 'VALID',
+            action: 'NONE',
+            isAdministrative: true,
+            reason: 'Partido ya iniciado/finalizado sin pronóstico asignado'
+          });
+        } else {
+          const action = dbMatch.prediction ? 'UPDATE_RECALCULATE' : 'CREATE_RECALCULATE';
+          if (action === 'CREATE_RECALCULATE') newHistoryCount++;
+          else updateHistoryCount++;
+          
+          if (dbMatch.actualHomeScore !== null && dbMatch.actualAwayScore !== null) {
+            recalculatedCount++;
+          }
+
+          items.push({
+            rowNumber,
+            matchNumber: normalized.matchNumber,
+            excelDate: normalized.kickoffAt ? normalized.kickoffAt.toISOString() : null,
+            homeTeam: normalized.homeTeam,
+            awayTeam: normalized.awayTeam,
+            prediction: predictionStr,
+            matchedMatch: {
+              id: dbMatch.id,
+              homeTeam: dbMatch.homeTeam,
+              awayTeam: dbMatch.awayTeam,
+              kickoffAt: dbMatch.kickoffAt ? dbMatch.kickoffAt.toISOString() : null,
+              status: dbMatch.status,
+            },
+            status: 'VALID',
+            action,
+            isAdministrative: true,
+            reason: action === 'CREATE_RECALCULATE' ? 'Crear pronóstico histórico y recalcular' : 'Actualizar pronóstico histórico y recalcular'
+          });
+        }
       } else {
         validCount++;
         if (normalized.predictedHomeScore === null || normalized.predictedAwayScore === null) {
@@ -659,8 +702,8 @@ export async function previewPredictionImport(buffer: Buffer): Promise<Predictio
           });
         } else {
           const action = dbMatch.prediction ? 'UPDATE' : 'CREATE';
-          if (action === 'CREATE') newCount++;
-          else updateCount++;
+          if (action === 'CREATE') newFutureCount++;
+          else updateFutureCount++;
 
           items.push({
             rowNumber,
@@ -693,8 +736,11 @@ export async function previewPredictionImport(buffer: Buffer): Promise<Predictio
     notFoundCount,
     ambiguousCount,
     blockedCount,
-    newCount,
-    updateCount,
+    newFutureCount,
+    updateFutureCount,
+    newHistoryCount,
+    updateHistoryCount,
+    recalculatedCount,
     items,
     sheetName,
   };
@@ -702,10 +748,12 @@ export async function previewPredictionImport(buffer: Buffer): Promise<Predictio
 
 export async function confirmPredictionImport(buffer: Buffer): Promise<PredictionConfirmReport> {
   const report = await previewPredictionImport(buffer);
-  let createdCount = 0;
-  let updatedCount = 0;
+  let createdFutureCount = 0;
+  let updatedFutureCount = 0;
+  let createdHistoryCount = 0;
+  let updatedHistoryCount = 0;
+  let recalculatedCount = 0;
   let ignoredCount = 0;
-  let blockedCount = 0;
   let notFoundCount = 0;
   let ambiguousCount = 0;
   let errorCount = 0;
@@ -715,10 +763,6 @@ export async function confirmPredictionImport(buffer: Buffer): Promise<Predictio
       for (const item of report.items) {
         if (item.status === 'INVALID') {
           errorCount++;
-          continue;
-        }
-        if (item.status === 'BLOCKED') {
-          blockedCount++;
           continue;
         }
         if (item.status === 'NOT_FOUND') {
@@ -731,39 +775,88 @@ export async function confirmPredictionImport(buffer: Buffer): Promise<Predictio
         }
 
         if (item.status === 'VALID' && item.matchedMatch) {
-          if (item.action === 'CREATE') {
-            const parts = item.prediction.split('-');
-            const home = parseInt(parts[0].trim(), 10);
-            const away = parseInt(parts[1].trim(), 10);
-            
-            try {
-              await tx.prediction.create({
-                data: {
-                  matchId: item.matchedMatch.id,
-                  predictedHomeScore: home,
-                  predictedAwayScore: away,
-                }
-              });
-              createdCount++;
-            } catch (err: any) {
-              throw new Error(`Error al insertar predicción para fila ${item.rowNumber} (${item.homeTeam} vs ${item.awayTeam}): ${err.message || 'error DB'}`);
-            }
-          } else if (item.action === 'UPDATE') {
+          const isRecalculateAction = item.action === 'CREATE_RECALCULATE' || item.action === 'UPDATE_RECALCULATE';
+          const isCreateAction = item.action === 'CREATE' || item.action === 'CREATE_RECALCULATE';
+          const isUpdateAction = item.action === 'UPDATE' || item.action === 'UPDATE_RECALCULATE';
+
+          if (isCreateAction || isUpdateAction) {
             const parts = item.prediction.split('-');
             const home = parseInt(parts[0].trim(), 10);
             const away = parseInt(parts[1].trim(), 10);
 
             try {
-              await tx.prediction.update({
-                where: { matchId: item.matchedMatch.id },
-                data: {
+              if (isCreateAction) {
+                await tx.prediction.create({
+                  data: {
+                    matchId: item.matchedMatch.id,
+                    predictedHomeScore: home,
+                    predictedAwayScore: away,
+                  }
+                });
+                if (isRecalculateAction) createdHistoryCount++;
+                else createdFutureCount++;
+              } else {
+                await tx.prediction.update({
+                  where: { matchId: item.matchedMatch.id },
+                  data: {
+                    predictedHomeScore: home,
+                    predictedAwayScore: away,
+                  }
+                });
+                if (isRecalculateAction) updatedHistoryCount++;
+                else updatedFutureCount++;
+              }
+
+              // Retrieve the full match from the transaction to get real score details
+              const dbMatch = await tx.match.findUnique({
+                where: { id: item.matchedMatch.id },
+              });
+
+              if (!dbMatch) {
+                throw new Error(`Partido con ID ${item.matchedMatch.id} no encontrado en DB`);
+              }
+
+              // Point Recalculation if result exists
+              if (dbMatch.actualHomeScore !== null && dbMatch.actualAwayScore !== null) {
+                const predInput = {
                   predictedHomeScore: home,
                   predictedAwayScore: away,
-                }
-              });
-              updatedCount++;
+                  predictedHomePenalties: null,
+                  predictedAwayPenalties: null,
+                  predictedWinner: null,
+                };
+                const matchInput = {
+                  stage: dbMatch.stage,
+                  homeTeam: dbMatch.homeTeam,
+                  awayTeam: dbMatch.awayTeam,
+                  actualHomeScore: dbMatch.actualHomeScore,
+                  actualAwayScore: dbMatch.actualAwayScore,
+                  actualHomePenalties: dbMatch.actualHomePenalties,
+                  actualAwayPenalties: dbMatch.actualAwayPenalties,
+                  actualWinner: dbMatch.actualWinner,
+                };
+
+                const scoreResult = calculateMatchScore(predInput, matchInput);
+
+                await tx.score.upsert({
+                  where: { matchId: dbMatch.id },
+                  update: {
+                    points: scoreResult.points,
+                    reason: scoreResult.reason,
+                    calculatedAt: new Date(),
+                  },
+                  create: {
+                    matchId: dbMatch.id,
+                    points: scoreResult.points,
+                    reason: scoreResult.reason,
+                  }
+                });
+
+                recalculatedCount++;
+              }
             } catch (err: any) {
-              throw new Error(`Error al actualizar predicción para fila ${item.rowNumber} (${item.homeTeam} vs ${item.awayTeam}): ${err.message || 'error DB'}`);
+              const op = isCreateAction ? 'insertar' : 'actualizar';
+              throw new Error(`Error al ${op} predicción/puntaje para fila ${item.rowNumber} (${item.homeTeam} vs ${item.awayTeam}): ${err.message || 'error DB'}`);
             }
           } else {
             ignoredCount++;
@@ -774,11 +867,13 @@ export async function confirmPredictionImport(buffer: Buffer): Promise<Predictio
 
     return {
       success: true,
-      message: `Importación completada con éxito. Creados: ${createdCount}, Actualizados: ${updatedCount}`,
-      createdCount,
-      updatedCount,
+      message: `Importación completada con éxito. Creados: ${createdFutureCount + createdHistoryCount}, Actualizados: ${updatedFutureCount + updatedHistoryCount}, Recalculados: ${recalculatedCount}`,
+      createdFutureCount,
+      updatedFutureCount,
+      createdHistoryCount,
+      updatedHistoryCount,
+      recalculatedCount,
       ignoredCount,
-      blockedCount,
       notFoundCount,
       ambiguousCount,
       errorCount,
