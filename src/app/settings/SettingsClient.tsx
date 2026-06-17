@@ -219,9 +219,6 @@ export default function SettingsClient({
     }
   };
 
-  const handleDownloadTemplate = () => {
-    window.location.href = '/api/predictions/template';
-  };
 
   // Acciones de Base de Datos
   const handleRecalculate = () => {
@@ -721,58 +718,57 @@ export default function SettingsClient({
           </p>
         </div>
 
-        {predictionStatus === 'IDLE' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Step 1: Download template */}
-            <div className="p-5 rounded-xl border border-zinc-800 bg-[#0a0a0f] hover:bg-[#0f0f15]/50 transition duration-200 flex flex-col justify-between space-y-4">
-              <div className="space-y-2">
-                <h4 className="text-sm font-bold text-zinc-200 flex items-center space-x-2">
-                  <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-400 text-xs flex items-center justify-center font-bold">1</span>
-                  <span>Descargar plantilla</span>
-                </h4>
-                <p className="text-xs text-zinc-505 mt-1 font-medium leading-relaxed text-zinc-500">
-                  Descarga una plantilla basada en los partidos actuales para evitar errores de coincidencia.
-                </p>
-              </div>
-              <button
-                onClick={handleDownloadTemplate}
-                className="w-full py-2.5 px-4 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-300 transition flex items-center justify-center space-x-2 cursor-pointer"
-              >
-                <Download className="h-4 w-4 text-[#34d399]" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Step 1: Download template */}
+          <div className="p-5 rounded-xl border border-zinc-800 bg-[#0a0a0f] hover:bg-[#0f0f15]/50 transition duration-200 flex flex-col justify-between space-y-4">
+            <div className="space-y-2">
+              <h4 className="text-sm font-bold text-zinc-200 flex items-center space-x-2">
+                <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-400 text-xs flex items-center justify-center font-bold">1</span>
                 <span>Descargar plantilla</span>
-              </button>
+              </h4>
+              <p className="text-xs mt-1 font-medium leading-relaxed text-zinc-500">
+                Descarga una plantilla basada en los partidos actuales para evitar errores de coincidencia.
+              </p>
             </div>
+            <a
+              href="/api/predictions/template"
+              download
+              className="w-full py-2.5 px-4 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-300 transition flex items-center justify-center space-x-2 cursor-pointer"
+            >
+              <Download className="h-4 w-4 text-[#34d399]" />
+              <span>Descargar plantilla</span>
+            </a>
+          </div>
 
-            {/* Step 2: Upload predictions */}
-            <div className="p-5 rounded-xl border border-zinc-800 bg-[#0a0a0f] hover:bg-[#0f0f15]/50 transition duration-200 flex flex-col justify-between space-y-4">
-              <div className="space-y-2">
-                <h4 className="text-sm font-bold text-zinc-200 flex items-center space-x-2">
-                  <span className="w-5 h-5 rounded-full bg-emerald-950/40 text-emerald-400 text-xs flex items-center justify-center font-bold">2</span>
-                  <span>Cargar predicciones</span>
-                </h4>
-                <p className="text-xs text-zinc-505 mt-1 font-medium leading-relaxed text-zinc-500">
-                  Completa únicamente las columnas de pronóstico y vuelve a subir el archivo.
-                </p>
-              </div>
-              <div className="w-full">
-                <input
-                  type="file"
-                  id="prediction-file-input"
-                  accept=".xlsx, .xls"
-                  onChange={handlePredictionFileChange}
-                  className="hidden"
-                />
-                <label
-                  htmlFor="prediction-file-input"
-                  className="w-full py-2.5 px-4 rounded-lg bg-[#059669] hover:bg-[#047857] text-xs font-bold text-white transition flex items-center justify-center space-x-2 cursor-pointer text-center"
-                >
-                  <Upload className="h-4 w-4" />
-                  <span>Cargar predicciones</span>
-                </label>
-              </div>
+          {/* Step 2: Upload predictions */}
+          <div className="p-5 rounded-xl border border-zinc-800 bg-[#0a0a0f] hover:bg-[#0f0f15]/50 transition duration-200 flex flex-col justify-between space-y-4">
+            <div className="space-y-2">
+              <h4 className="text-sm font-bold text-zinc-200 flex items-center space-x-2">
+                <span className="w-5 h-5 rounded-full bg-emerald-950/40 text-emerald-400 text-xs flex items-center justify-center font-bold">2</span>
+                <span>Cargar predicciones</span>
+              </h4>
+              <p className="text-xs mt-1 font-medium leading-relaxed text-zinc-500">
+                Completa únicamente las columnas de pronóstico y vuelve a subir el archivo.
+              </p>
+            </div>
+            <div className="w-full">
+              <input
+                type="file"
+                id="prediction-file-input"
+                accept=".xlsx, .xls"
+                onChange={handlePredictionFileChange}
+                className="hidden"
+              />
+              <label
+                htmlFor="prediction-file-input"
+                className="w-full py-2.5 px-4 rounded-lg bg-[#059669] hover:bg-[#047857] text-xs font-bold text-white transition flex items-center justify-center space-x-2 cursor-pointer text-center"
+              >
+                <Upload className="h-4 w-4" />
+                <span>Cargar predicciones</span>
+              </label>
             </div>
           </div>
-        )}
+        </div>
 
         {predictionStatus === 'ANALYZING' && (
           <div className="flex flex-col items-center justify-center p-8 border border-[#272733] rounded-xl bg-[#0a0a0f]">
