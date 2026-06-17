@@ -159,8 +159,9 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
       return;
     }
 
-    // Para fases de eliminación si hay empate
     const match = matches.find(m => m.id === matchId);
+
+    // Para fases de eliminación si hay empate
     if (match && match.stage !== 'GROUP_STAGE' && homeScoreVal !== null && awayScoreVal !== null) {
       if (homeScoreVal === awayScoreVal) {
         if (winnerVal === null) {
@@ -169,6 +170,14 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
         }
       }
     }
+
+    if (match && (match.status === 'FINISHED' || match.status === 'MANUAL_PROJECTION')) {
+      const confirmSave = window.confirm(
+        'Este partido ya comenzó o finalizó. ¿Confirmas que deseas guardar/corregir este pronóstico como administrador?'
+      );
+      if (!confirmSave) return;
+    }
+
 
     startTransition(async () => {
       try {
@@ -285,8 +294,7 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
             const isDraw = draft.homeScore !== '' && draft.awayScore !== '' && draft.homeScore === draft.awayScore;
             const isCompleted = draft.homeScore !== '' && draft.awayScore !== '';
             
-            // Si ya se jugó el partido, las predicciones deben estar bloqueadas
-            const isLocked = m.status === 'FINISHED' || m.status === 'MANUAL_PROJECTION';
+            const isHistorical = m.status === 'FINISHED' || m.status === 'MANUAL_PROJECTION';
 
             return (
               <div 
@@ -304,7 +312,7 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
                       {m.stage.replace('_', ' ')} {m.groupName ? `• ${m.groupName}` : ''}
                     </span>
                     <span className="flex items-center space-x-1">
-                      {isLocked ? (
+                      {isHistorical ? (
                         <span className="text-emerald-500 font-semibold flex items-center space-x-1">
                           <Check className="h-3 w-3 shrink-0" />
                           <span>Finalizado</span>
@@ -323,6 +331,13 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
                     </span>
                   </div>
 
+                  {isHistorical && (
+                    <div className="mb-4 p-2 rounded bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-500 font-bold flex items-center space-x-1 uppercase tracking-wider animate-fade-in">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      <span>Pronóstico Histórico (Edición Administrativa)</span>
+                    </div>
+                  )}
+
                   {/* Teams and Score inputs */}
                   <div className="flex items-center justify-between space-x-4">
                     {/* Home Team */}
@@ -339,9 +354,8 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
                         min="0"
                         placeholder="-"
                         value={draft.homeScore}
-                        disabled={isLocked}
                         onChange={(e) => handleScoreChange(m.id, 'home', e.target.value)}
-                        className="w-12 h-12 rounded-xl bg-[#13131a] border border-[#1e1e24] text-center text-lg font-black text-white focus:outline-none focus:border-[#6d28d9] focus:ring-1 focus:ring-[#6d28d9] disabled:opacity-40"
+                        className="w-12 h-12 rounded-xl bg-[#13131a] border border-[#1e1e24] text-center text-lg font-black text-white focus:outline-none focus:border-[#6d28d9] focus:ring-1 focus:ring-[#6d28d9]"
                       />
                       <span className="text-zinc-600 font-bold text-xs">VS</span>
                       <input
@@ -349,9 +363,8 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
                         min="0"
                         placeholder="-"
                         value={draft.awayScore}
-                        disabled={isLocked}
                         onChange={(e) => handleScoreChange(m.id, 'away', e.target.value)}
-                        className="w-12 h-12 rounded-xl bg-[#13131a] border border-[#1e1e24] text-center text-lg font-black text-white focus:outline-none focus:border-[#6d28d9] focus:ring-1 focus:ring-[#6d28d9] disabled:opacity-40"
+                        className="w-12 h-12 rounded-xl bg-[#13131a] border border-[#1e1e24] text-center text-lg font-black text-white focus:outline-none focus:border-[#6d28d9] focus:ring-1 focus:ring-[#6d28d9]"
                       />
                     </div>
 
@@ -372,11 +385,10 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
 
                       {/* Select Winner Toggle */}
                       <div className="flex flex-col items-center space-y-2">
-                        <span className="text-[10px] text-zinc-500 font-bold">¿QUIÉN CLASIFICA?</span>
+                        <span className="text-[10px] text-zinc-500 font-bold">¿QUIÊN CLASIFICA?</span>
                         <div className="flex bg-[#0f0f15] rounded-lg p-0.5 border border-[#1e1e24] w-full">
                           <button
                             type="button"
-                            disabled={isLocked}
                             onClick={() => handleWinnerSelect(m.id, m.homeTeam)}
                             className={`flex-1 py-1.5 px-3 rounded text-xs font-bold transition-all duration-200 truncate ${
                               draft.winner === m.homeTeam
@@ -388,7 +400,6 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
                           </button>
                           <button
                             type="button"
-                            disabled={isLocked}
                             onClick={() => handleWinnerSelect(m.id, m.awayTeam)}
                             className={`flex-1 py-1.5 px-3 rounded text-xs font-bold transition-all duration-200 truncate ${
                               draft.winner === m.awayTeam
@@ -410,7 +421,6 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
                             min="0"
                             placeholder="Pen"
                             value={draft.homePenalties}
-                            disabled={isLocked}
                             onChange={(e) => handlePenaltiesChange(m.id, 'home', e.target.value)}
                             className="w-12 h-9 rounded-lg bg-[#0f0f15] border border-[#1e1e24] text-center text-xs font-bold text-white focus:outline-none focus:border-[#6d28d9]"
                           />
@@ -420,7 +430,6 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
                             min="0"
                             placeholder="Pen"
                             value={draft.awayPenalties}
-                            disabled={isLocked}
                             onChange={(e) => handlePenaltiesChange(m.id, 'away', e.target.value)}
                             className="w-12 h-9 rounded-lg bg-[#0f0f15] border border-[#1e1e24] text-center text-xs font-bold text-white focus:outline-none focus:border-[#6d28d9]"
                           />
@@ -430,7 +439,7 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
                   )}
 
                   {/* Real Score Result display (if match finished) */}
-                  {isLocked && (
+                  {isHistorical && (
                     <div className="mt-4 p-3 rounded-xl bg-zinc-950 border border-zinc-900 flex justify-between items-center text-xs text-zinc-400">
                       <span>Resultado real: <span className="font-bold text-white">{m.actualHomeScore} - {m.actualAwayScore}</span></span>
                       {m.stage !== 'GROUP_STAGE' && m.actualHomeScore === m.actualAwayScore && (
@@ -441,45 +450,43 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
                 </div>
 
                 {/* Footer Save Button */}
-                {!isLocked && (
-                  <div className="mt-5 border-t border-[#1e1e24]/60 pt-4 flex items-center justify-between">
-                    <span className="text-[10px] text-zinc-500 font-semibold">
-                      {draft.isDirty ? (
-                        <span className="text-amber-500 flex items-center space-x-1">
-                          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                          <span>Cambios sin guardar</span>
-                        </span>
-                      ) : (
-                        <span className="text-zinc-600">Al día</span>
-                      )}
-                    </span>
+                <div className="mt-5 border-t border-[#1e1e24]/60 pt-4 flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-500 font-semibold">
+                    {draft.isDirty ? (
+                      <span className="text-amber-500 flex items-center space-x-1">
+                        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                        <span>Cambios sin guardar</span>
+                      </span>
+                    ) : (
+                      <span className="text-zinc-600">Al día</span>
+                    )}
+                  </span>
 
-                    <button
-                      type="button"
-                      disabled={!draft.isDirty || isPending}
-                      onClick={() => savePredictionHandler(m.id)}
-                      className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-all duration-200 ${
-                        draft.isDirty
-                          ? 'bg-[#6d28d9] hover:bg-[#5b21b6] text-white hover:scale-[1.02] cursor-pointer'
-                          : draft.isSaved
-                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                          : 'bg-zinc-800/40 text-zinc-600 cursor-not-allowed'
-                      }`}
-                    >
-                      {draft.isSaved ? (
-                        <>
-                          <Check className="h-3.5 w-3.5" />
-                          <span>Guardado</span>
-                        </>
-                      ) : (
-                        <>
-                          <Save className="h-3.5 w-3.5" />
-                          <span>Guardar</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                )}
+                  <button
+                    type="button"
+                    disabled={!draft.isDirty || isPending}
+                    onClick={() => savePredictionHandler(m.id)}
+                    className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-all duration-200 ${
+                      draft.isDirty
+                        ? 'bg-[#6d28d9] hover:bg-[#5b21b6] text-white hover:scale-[1.02] cursor-pointer'
+                        : draft.isSaved
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                        : 'bg-zinc-800/40 text-zinc-600 cursor-not-allowed'
+                    }`}
+                  >
+                    {draft.isSaved ? (
+                      <>
+                        <Check className="h-3.5 w-3.5" />
+                        <span>Guardado</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save className="h-3.5 w-3.5" />
+                        <span>Guardar</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             );
           })
@@ -488,3 +495,4 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
     </div>
   );
 }
+

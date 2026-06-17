@@ -5,6 +5,7 @@ import { ApiFootballProvider } from '../lib/api-football-provider';
 import { FootballDataProvider } from '../lib/football-data-provider';
 import { NormalizedFixture } from '../lib/results-provider';
 import { previewPredictionImport, confirmPredictionImport } from '../lib/excel-parser';
+import { upsertPrediction } from '../app/actions';
 import * as XLSX from 'xlsx';
 import fs from 'fs';
 import path from 'path';
@@ -1048,3 +1049,91 @@ describe('Excel Predictions Import Tests', () => {
     spy.mockRestore();
   });
 });
+
+describe('Individual Predictions Administrative Tests', () => {
+  test('Debería crear predicción individual para partido finalizado y recalcular puntaje', async () => {
+    const m = await prisma.match.create({
+      data: {
+        externalApiId: 'indiv-hist-create',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo B',
+        homeTeam: 'Spain',
+        awayTeam: 'Portugal',
+        kickoffAt: new Date('2026-06-12T12:00:00Z'),
+        status: 'FINISHED',
+        resultSource: 'MANUAL_REAL',
+        actualHomeScore: 2,
+        actualAwayScore: 1,
+      }
+    });
+
+    // Crear la predicción individual
+    await upsertPrediction(m.id, {
+      predictedHomeScore: 2,
+      predictedAwayScore: 1,
+      predictedHomePenalties: null,
+      predictedAwayPenalties: null,
+      predictedWinner: null,
+    });
+
+    const dbMatch = await prisma.match.findUnique({
+      where: { id: m.id },
+      include: { prediction: true, score: true }
+    });
+
+    expect(dbMatch?.prediction?.predictedHomeScore).toBe(2);
+    expect(dbMatch?.prediction?.predictedAwayScore).toBe(1);
+    
+    // Debería calcular 6 puntos (marcador exacto)
+    expect(dbMatch?.score?.points).toBe(6);
+    expect(dbMatch?.score?.reason).toContain('Resultado exacto');
+
+    // No debe haber cambiado los campos del partido
+    expect(dbMatch?.actualHomeScore).toBe(2);
+    expect(dbMatch?.actualAwayScore).toBe(1);
+    expect(dbMatch?.status).toBe('FINISHED');
+    expect(dbMatch?.resultSource).toBe('MANUAL_REAL');
+  });
+
+  test('Debería hacer rollback de la predicción individual si falla el recálculo', async () => {
+    const m = await prisma.match.create({
+      data: {
+        externalApiId: 'indiv-hist-rollback',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo B',
+        homeTeam: 'Germany',
+        awayTeam: 'France',
+        kickoffAt: new Date('2026-06-12T12:00:00Z'),
+        status: 'FINISHED',
+        resultSource: 'MANUAL_REAL',
+        actualHomeScore: 2,
+        actualAwayScore: 1,
+      }
+    });
+
+    const scoringModule = await import('../lib/scoring');
+    const spy = vi.spyOn(scoringModule, 'calculateMatchScore').mockImplementationOnce(() => {
+      throw new Error('Simulated individual score calculation error');
+    });
+
+    await expect(
+      upsertPrediction(m.id, {
+        predictedHomeScore: 2,
+        predictedAwayScore: 1,
+        predictedHomePenalties: null,
+        predictedAwayPenalties: null,
+        predictedWinner: null,
+      })
+    ).rejects.toThrow('Simulated individual score calculation error');
+
+    // Confirm rollback: prediction should NOT be in the DB
+    const dbMatch = await prisma.match.findUnique({
+      where: { id: m.id },
+      include: { prediction: true }
+    });
+
+    expect(dbMatch?.prediction).toBeNull();
+    spy.mockRestore();
+  });
+});
+

@@ -81,39 +81,72 @@ export async function upsertPrediction(
   // Verificar si la predicción está completamente vacía para decidir si guardamos o eliminamos
   const isEmpty = data.predictedHomeScore === null && data.predictedAwayScore === null;
 
-  if (isEmpty) {
-    await prisma.prediction.deleteMany({
-      where: { matchId },
-    });
-  } else {
-    await prisma.prediction.upsert({
-      where: { matchId },
-      update: {
-        predictedHomeScore: data.predictedHomeScore,
-        predictedAwayScore: data.predictedAwayScore,
-        predictedHomePenalties: data.predictedHomePenalties,
-        predictedAwayPenalties: data.predictedAwayPenalties,
-        predictedWinner: data.predictedWinner,
-      },
-      create: {
-        matchId,
-        predictedHomeScore: data.predictedHomeScore,
-        predictedAwayScore: data.predictedAwayScore,
-        predictedHomePenalties: data.predictedHomePenalties,
-        predictedAwayPenalties: data.predictedAwayPenalties,
-        predictedWinner: data.predictedWinner,
-      },
-    });
-  }
+  await prisma.$transaction(async (tx) => {
+    if (isEmpty) {
+      await tx.prediction.deleteMany({
+        where: { matchId },
+      });
+    } else {
+      await tx.prediction.upsert({
+        where: { matchId },
+        update: {
+          predictedHomeScore: data.predictedHomeScore,
+          predictedAwayScore: data.predictedAwayScore,
+          predictedHomePenalties: data.predictedHomePenalties,
+          predictedAwayPenalties: data.predictedAwayPenalties,
+          predictedWinner: data.predictedWinner,
+        },
+        create: {
+          matchId,
+          predictedHomeScore: data.predictedHomeScore,
+          predictedAwayScore: data.predictedAwayScore,
+          predictedHomePenalties: data.predictedHomePenalties,
+          predictedAwayPenalties: data.predictedAwayPenalties,
+          predictedWinner: data.predictedWinner,
+        },
+      });
+    }
 
-  // Recalcular el puntaje de este partido inmediatamente
-  await recalculateMatchScore(matchId);
+    // Recalcular e insertar puntaje para el partido de forma atómica
+    const match = await tx.match.findUnique({
+      where: { id: matchId },
+      include: { prediction: true },
+    });
+
+    if (match) {
+      if (match.actualHomeScore === null || match.actualAwayScore === null) {
+        // Si no hay resultado, borramos el puntaje si existe
+        await tx.score.deleteMany({
+          where: { matchId },
+        });
+      } else {
+        // Calcular puntaje
+        const scoreResult = calculateMatchScore(match.prediction, match);
+
+        // Guardar de forma idempotente
+        await tx.score.upsert({
+          where: { matchId },
+          update: {
+            points: scoreResult.points,
+            reason: scoreResult.reason,
+            calculatedAt: new Date(),
+          },
+          create: {
+            matchId,
+            points: scoreResult.points,
+            reason: scoreResult.reason,
+          },
+        });
+      }
+    }
+  });
 
   safeRevalidatePath('/');
   safeRevalidatePath('/predictions');
   safeRevalidatePath('/results');
   safeRevalidatePath('/scores');
 }
+
 
 // 3. Guardar o actualizar el resultado de un partido
 export async function upsertMatchResult(

@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db';
 import { Match } from '@prisma/client';
 import SettingsClient from './SettingsClient';
 
-export const revalidate = 0; // Disable cache for fresh DB reads
+export const dynamic = 'force-dynamic'; // Disable cache for fresh DB reads
 
 export default async function SettingsPage() {
   const matches: Match[] = await prisma.match.findMany({
@@ -37,7 +37,12 @@ export default async function SettingsPage() {
         isApiKeyConfigured={isApiKeyConfigured}
         activeProvider={providerType}
       />
+
+      <div className="mt-8 pt-4 border-t border-[#1e1e24]/60 text-center text-xs text-zinc-600 font-bold uppercase tracking-widest">
+        Build: admin-import-v2
+      </div>
     </div>
   );
 }
+
 
