@@ -10,7 +10,8 @@ import {
   deleteMatchAction,
   exportDataAction,
   syncTournamentAction,
-  compareExcelBackupAction
+  compareExcelBackupAction,
+  importExcelBackupAction
 } from '../actions';
 import { 
   RefreshCw, 
@@ -38,11 +39,13 @@ interface Match {
 export default function SettingsClient({ 
   initialMatches,
   initialLastSyncLog,
-  isApiKeyConfigured
+  isApiKeyConfigured,
+  activeProvider
 }: { 
   initialMatches: Match[];
   initialLastSyncLog: any;
   isApiKeyConfigured: boolean;
+  activeProvider: string;
 }) {
   const [matches, setMatches] = useState<Match[]>(initialMatches);
   const [isPending, startTransition] = useTransition();
@@ -86,6 +89,23 @@ export default function SettingsClient({
       } catch (err: any) {
         setExcelError(err.message || 'Error al conectar con el servidor');
         setExcelReport(null);
+      }
+    });
+  };
+
+  const handleImportExcel = () => {
+    if (!confirm('¿Deseas importar la fase de grupos desde el archivo Excel de respaldo?')) return;
+    startTransition(async () => {
+      try {
+        const res = await importExcelBackupAction();
+        if (res.success) {
+          alert(res.message);
+          window.location.reload();
+        } else {
+          alert('Error al importar Excel: ' + res.message);
+        }
+      } catch (err: any) {
+        alert('Error: ' + err.message);
       }
     });
   };
@@ -354,16 +374,22 @@ export default function SettingsClient({
 
       {/* 2026 World Cup Sync Section */}
       <div className="p-6 rounded-2xl bg-[#0f0f15]/75 border border-[#1e1e24] space-y-6">
-        <div>
-          <h3 className="font-extrabold text-lg tracking-tight flex items-center space-x-2">
-            <span className="p-1.5 rounded-lg bg-[#6d28d9]/10 text-[#a78bfa]">
-              <RefreshCw className="h-5 w-5" />
-            </span>
-            <span>Sincronización del Mundial 2026</span>
-          </h3>
-          <p className="text-xs text-zinc-500 mt-1 font-medium">
-            Sincroniza automáticamente los partidos, horarios y resultados oficiales de la API de API-Football.
-          </p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h3 className="font-extrabold text-lg tracking-tight flex items-center space-x-2">
+              <span className="p-1.5 rounded-lg bg-[#6d28d9]/10 text-[#a78bfa]">
+                <RefreshCw className="h-5 w-5" />
+              </span>
+              <span>Sincronización del Mundial 2026</span>
+            </h3>
+            <p className="text-xs text-zinc-500 mt-1 font-medium">
+              Sincroniza automáticamente los partidos, horarios y resultados oficiales del torneo.
+            </p>
+          </div>
+          <div className="flex items-center space-x-2 bg-[#13131a] px-3.5 py-1.5 rounded-xl border border-zinc-800/80 text-[11px] font-bold">
+            <span className="text-zinc-500 uppercase tracking-wider">Proveedor Activo:</span>
+            <span className="text-[#a78bfa]">{activeProvider === 'api-football' ? 'API-Football' : 'football-data.org'}</span>
+          </div>
         </div>
 
         {/* API Key Status Check */}
@@ -373,22 +399,31 @@ export default function SettingsClient({
             <div>
               <p className="font-bold">API Key Ausente / No Configurada</p>
               <p className="text-amber-400/80 mt-1">
-                La variable de entorno <code className="bg-[#13131a] px-1.5 py-0.5 rounded text-amber-300 font-mono">API_FOOTBALL_KEY</code> no está presente en el servidor.
-                Deberás configurarla en Vercel o en tu archivo local para habilitar la importación en tiempo real.
+                La variable de entorno <code className="bg-[#13131a] px-1.5 py-0.5 rounded text-amber-300 font-mono">{activeProvider === 'api-football' ? 'API_FOOTBALL_KEY' : 'FOOTBALL_DATA_API_KEY'}</code> no está presente en el servidor.
+                Deberás configurarla en Vercel o en tu archivo local para habilitar la sincronización en tiempo real con {activeProvider === 'api-football' ? 'API-Football' : 'football-data.org'}.
               </p>
             </div>
           </div>
         )}
 
         {/* Action Buttons */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3.5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-3.5">
+          <button
+            onClick={handleImportExcel}
+            disabled={isPending}
+            className="px-4 py-2.5 rounded-lg bg-emerald-950/20 hover:bg-emerald-950/40 disabled:opacity-40 border border-emerald-900/30 text-xs font-bold text-emerald-400 transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1.5"
+          >
+            <Database className="h-3.5 w-3.5" />
+            <span>Importar Excel</span>
+          </button>
+
           <button
             onClick={() => handleSync('FULL')}
             disabled={isPending || !isApiKeyConfigured}
             className="px-4 py-2.5 rounded-lg bg-[#6d28d9]/15 hover:bg-[#6d28d9]/25 disabled:bg-zinc-900/45 disabled:text-zinc-600 disabled:border-zinc-800/40 border border-[#6d28d9]/30 text-xs font-bold text-[#a78bfa] transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1.5"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${syncLoadingType === 'FULL' ? 'animate-spin' : ''}`} />
-            <span>Calendario Completo</span>
+            <span>Calendario API</span>
           </button>
 
           <button

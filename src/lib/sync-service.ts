@@ -1,10 +1,22 @@
 import { prisma } from './db';
 import { ApiFootballProvider } from './api-football-provider';
-import { NormalizedFixture } from './results-provider';
+import { FootballDataProvider } from './football-data-provider';
+import { NormalizedFixture, FootballResultsProvider } from './results-provider';
 import { recalculateMatchScore } from '../app/actions';
+import { teamsMatch, isGroupCompatible, isDateCompatible } from './excel-parser';
+
+export function getActiveProvider(): FootballResultsProvider {
+  const providerType = process.env.FOOTBALL_PROVIDER || 'football-data';
+  if (providerType === 'api-football') {
+    return new ApiFootballProvider();
+  }
+  return new FootballDataProvider();
+}
 
 export async function syncTournament(syncType: 'FULL' | 'DAILY' | 'LIVE' | 'MANUAL') {
   const startedAt = new Date();
+  const providerType = process.env.FOOTBALL_PROVIDER || 'football-data';
+  const providerName = providerType === 'api-football' ? 'API-Football' : 'football-data.org';
   
   // 1. Protection against concurrent runs: Check for active syncs in the last 5 minutes
   const activeSync = await prisma.syncLog.findFirst({
@@ -30,7 +42,7 @@ export async function syncTournament(syncType: 'FULL' | 'DAILY' | 'LIVE' | 'MANU
   // 2. Register sync log in database
   const syncLog = await prisma.syncLog.create({
     data: {
-      provider: 'API-Football',
+      provider: providerName,
       syncType,
       startedAt,
       status: 'IN_PROGRESS',
@@ -44,7 +56,7 @@ export async function syncTournament(syncType: 'FULL' | 'DAILY' | 'LIVE' | 'MANU
   let finalMessage = '';
 
   try {
-    const provider = new ApiFootballProvider();
+    const provider = getActiveProvider();
     let fixtures: NormalizedFixture[] = [];
 
     if (syncType === 'FULL' || syncType === 'MANUAL') {
@@ -71,7 +83,7 @@ export async function syncTournament(syncType: 'FULL' | 'DAILY' | 'LIVE' | 'MANU
 
     const isSuccess = errorCount === 0 || (createdCount > 0 || updatedCount > 0);
     const status = isSuccess ? 'SUCCESS' : 'FAILED';
-    finalMessage = `Sincronización finalizada con éxito. Creados: ${createdCount}, Actualizados: ${updatedCount}, Ignorados: ${skippedCount}, Errores: ${errorCount}`;
+    finalMessage = `Sincronización finalizada con éxito (${providerName}). Creados: ${createdCount}, Actualizados: ${updatedCount}, Ignorados: ${skippedCount}, Errores: ${errorCount}`;
 
     await prisma.syncLog.update({
       where: { id: syncLog.id },
@@ -96,7 +108,7 @@ export async function syncTournament(syncType: 'FULL' | 'DAILY' | 'LIVE' | 'MANU
     };
   } catch (error: any) {
     console.error('Error during synchronization:', error);
-    finalMessage = `Error en sincronización: ${error.message || 'Error desconocido'}`;
+    finalMessage = `Error en sincronización (${providerName}): ${error.message || 'Error desconocido'}`;
 
     await prisma.syncLog.update({
       where: { id: syncLog.id },
@@ -121,12 +133,45 @@ export async function syncTournament(syncType: 'FULL' | 'DAILY' | 'LIVE' | 'MANU
 
 export async function processNormalizedFixture(fixture: NormalizedFixture): Promise<'CREATED' | 'UPDATED' | 'SKIPPED'> {
   // Find match by externalApiId
-  const existingMatch = await prisma.match.findUnique({
+  let existingMatch = await prisma.match.findUnique({
     where: { externalApiId: fixture.externalApiId },
   });
 
   if (!existingMatch) {
-    // Determine initial resultSource: if API provides goals, it is API. Otherwise NONE.
+    // Strict matching logic to bind EXCEL-* placeholders to API IDs
+    const dbMatches = await prisma.match.findMany({
+      where: { stage: fixture.stage }
+    });
+
+    const candidates = dbMatches.filter(db => {
+      const homeMatches = teamsMatch(db.homeTeam, fixture.homeTeam);
+      const awayMatches = teamsMatch(db.awayTeam, fixture.awayTeam);
+      const groupMatches = isGroupCompatible(db.groupName, fixture.groupName);
+      const dateMatches = isDateCompatible(db.kickoffAt, fixture.kickoffAt);
+      return homeMatches && awayMatches && groupMatches && dateMatches;
+    });
+
+    if (candidates.length === 1) {
+      const matchToBind = candidates[0];
+      
+      // Update externalApiId in database, preserving predictions and scores by keeping the same row
+      await prisma.match.update({
+        where: { id: matchToBind.id },
+        data: { externalApiId: fixture.externalApiId }
+      });
+
+      // Update reference to proceed with update
+      existingMatch = await prisma.match.findUnique({
+        where: { id: matchToBind.id }
+      });
+    } else if (candidates.length > 1) {
+      console.warn(`Ambiguous match found for ${fixture.homeTeam} vs ${fixture.awayTeam} in stage ${fixture.stage}. Candidates: ${candidates.length}`);
+      // Skip automatic merge for ambiguity
+      return 'SKIPPED';
+    }
+  }
+
+  if (!existingMatch) {
     const hasResult = fixture.actualHomeScore !== null && fixture.actualAwayScore !== null;
     const resultSource = hasResult ? 'API' : 'NONE';
 
@@ -212,7 +257,7 @@ export async function processNormalizedFixture(fixture: NormalizedFixture): Prom
     }
   }
 
-  // API or NONE: overwrite always
+  // EXCEL, API or NONE: overwrite always
   const hasScoreChanged =
     existingMatch.actualHomeScore !== fixture.actualHomeScore ||
     existingMatch.actualAwayScore !== fixture.actualAwayScore ||
@@ -224,7 +269,7 @@ export async function processNormalizedFixture(fixture: NormalizedFixture): Prom
     existingMatch.awayTeam !== fixture.awayTeam;
 
   const hasResult = fixture.actualHomeScore !== null && fixture.actualAwayScore !== null;
-  const resultSource = hasResult ? 'API' : 'NONE';
+  const resultSource = hasResult ? 'API' : (source === 'EXCEL' ? 'EXCEL' : 'NONE');
 
   await prisma.match.update({
     where: { id: existingMatch.id },

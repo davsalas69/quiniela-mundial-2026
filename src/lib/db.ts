@@ -7,11 +7,18 @@ import path from 'path';
 
 const getProviderFromSchema = (): 'postgresql' | 'sqlite' => {
   try {
-    const schemaPath = path.join(process.cwd(), 'prisma', 'schema.prisma');
-    if (fs.existsSync(schemaPath)) {
-      const content = fs.readFileSync(schemaPath, 'utf8');
-      if (content.includes('provider = "sqlite"')) {
-        return 'sqlite';
+    const pathsToTry = [
+      path.join(process.cwd(), 'prisma', 'schema.prisma'),
+      path.join(__dirname, '..', '..', 'prisma', 'schema.prisma'),
+      path.join(__dirname, '..', 'prisma', 'schema.prisma'),
+      path.join(__dirname, 'prisma', 'schema.prisma')
+    ];
+    for (const schemaPath of pathsToTry) {
+      if (fs.existsSync(schemaPath)) {
+        const content = fs.readFileSync(schemaPath, 'utf8');
+        if (content.includes('provider = "sqlite"')) {
+          return 'sqlite';
+        }
       }
     }
   } catch (e) {

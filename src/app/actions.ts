@@ -6,7 +6,7 @@ import { prisma } from '@/lib/db';
 import { calculateMatchScore } from '@/lib/scoring';
 import { revalidatePath } from 'next/cache';
 import { syncTournament } from '@/lib/sync-service';
-import { compareDatabaseWithExcel } from '@/lib/excel-parser';
+import { compareDatabaseWithExcel, importExcelBackup } from '@/lib/excel-parser';
 
 function safeRevalidatePath(path: string) {
   try {
@@ -525,7 +525,16 @@ export async function getLastSyncLogAction() {
 }
 
 export async function isApiKeyConfiguredAction() {
-  return !!process.env.API_FOOTBALL_KEY;
+  const providerType = process.env.FOOTBALL_PROVIDER || 'football-data';
+  if (providerType === 'api-football') {
+    return !!process.env.API_FOOTBALL_KEY;
+  }
+  return !!process.env.FOOTBALL_DATA_API_KEY;
+}
+
+export async function getActiveProviderAction() {
+  const providerType = process.env.FOOTBALL_PROVIDER || 'football-data';
+  return providerType === 'api-football' ? 'api-football' : 'football-data';
 }
 
 export async function compareExcelBackupAction() {
@@ -539,6 +548,29 @@ export async function compareExcelBackupAction() {
     return {
       success: false,
       message: err.message || 'Error al procesar el archivo Excel',
+    };
+  }
+}
+
+export async function importExcelBackupAction() {
+  try {
+    const result = await importExcelBackup();
+    
+    safeRevalidatePath('/');
+    safeRevalidatePath('/predictions');
+    safeRevalidatePath('/results');
+    safeRevalidatePath('/scores');
+    safeRevalidatePath('/settings');
+    
+    return {
+      success: true,
+      message: `Importación completada con éxito. Creados: ${result.createdCount}, Actualizados: ${result.updatedCount}`,
+      ...result
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err.message || 'Error al importar datos desde Excel',
     };
   }
 }

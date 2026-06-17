@@ -15,7 +15,10 @@ export default async function SettingsPage() {
     orderBy: { startedAt: 'desc' }
   });
 
-  const isApiKeyConfigured = !!process.env.API_FOOTBALL_KEY;
+  const providerType = process.env.FOOTBALL_PROVIDER || 'football-data';
+  const isApiKeyConfigured = providerType === 'api-football'
+    ? !!process.env.API_FOOTBALL_KEY
+    : !!process.env.FOOTBALL_DATA_API_KEY;
 
   return (
     <div className="space-y-6">
@@ -32,6 +35,7 @@ export default async function SettingsPage() {
         initialMatches={matches} 
         initialLastSyncLog={lastSyncLog}
         isApiKeyConfigured={isApiKeyConfigured}
+        activeProvider={providerType}
       />
     </div>
   );

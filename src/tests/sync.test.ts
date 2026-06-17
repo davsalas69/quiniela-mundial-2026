@@ -2,10 +2,12 @@ import { vi, describe, test, expect, beforeEach, afterEach } from 'vitest';
 import { prisma } from '../lib/db';
 import { syncTournament, processNormalizedFixture } from '../lib/sync-service';
 import { ApiFootballProvider } from '../lib/api-football-provider';
+import { FootballDataProvider } from '../lib/football-data-provider';
 import { NormalizedFixture } from '../lib/results-provider';
 
-// Mock the ApiFootballProvider class
+// Mock the provider classes
 vi.mock('../lib/api-football-provider');
+vi.mock('../lib/football-data-provider');
 
 describe('Synchronization Engine Tests', () => {
   let mockProviderInstance: any;
@@ -27,6 +29,10 @@ describe('Synchronization Engine Tests', () => {
     };
 
     (ApiFootballProvider as any).mockImplementation(function() {
+      return mockProviderInstance;
+    });
+
+    (FootballDataProvider as any).mockImplementation(function() {
       return mockProviderInstance;
     });
   });
@@ -439,5 +445,228 @@ describe('Synchronization Engine Tests', () => {
     const score = await prisma.score.findUnique({ where: { matchId: match.id } });
     expect(score).toBeDefined();
     expect(score?.points).toBe(6); // Exact match points
+  });
+
+  // 16. Matching Excel/API & Vincular ID temporal EXCEL-* sin duplicados
+  test('16. Debería vincular un partido creado vía Excel con el ID real de la API si coincide de forma inequívoca', async () => {
+    // Crear partido preliminar de Excel
+    const match = await prisma.match.create({
+      data: {
+        externalApiId: 'EXCEL-10',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo A',
+        homeTeam: 'México',
+        awayTeam: 'Colombia',
+        kickoffAt: new Date('2026-06-11T18:00:00Z'),
+        status: 'SCHEDULED',
+        resultSource: 'EXCEL',
+      }
+    });
+
+    // Crear predicción para verificar que se conserva
+    const pred = await prisma.prediction.create({
+      data: {
+        matchId: match.id,
+        predictedHomeScore: 2,
+        predictedAwayScore: 1,
+      }
+    });
+
+    // Fixture de la API con ID real
+    const fixture: NormalizedFixture = {
+      externalApiId: 'api-real-100',
+      stage: 'GROUP_STAGE',
+      groupName: 'Grupo A',
+      homeTeam: 'Mexico', // Spelling normalized
+      awayTeam: 'Colombia',
+      kickoffAt: new Date('2026-06-11T18:30:00Z'), // Tolerancia < 1 día
+      status: 'FINISHED',
+      actualHomeScore: 3,
+      actualAwayScore: 2,
+      actualHomePenalties: null,
+      actualAwayPenalties: null,
+      actualWinner: 'Mexico',
+    };
+
+    const status = await processNormalizedFixture(fixture);
+    expect(status).toBe('UPDATED'); // Se actualiza el registro existente en lugar de crear uno nuevo
+
+    // Verificar que el ID de la API se vinculó al registro existente
+    const dbMatch = await prisma.match.findUnique({ where: { externalApiId: 'api-real-100' } });
+    expect(dbMatch).toBeDefined();
+    expect(dbMatch?.id).toBe(match.id); // Conserva el id autogenerado original
+    expect(dbMatch?.homeTeam).toBe('Mexico'); // Nombre actualizado por la API
+    expect(dbMatch?.actualHomeScore).toBe(3);
+    expect(dbMatch?.resultSource).toBe('API');
+
+    // Verificar que las predicciones asociadas se conservaron perfectamente
+    const dbPred = await prisma.prediction.findUnique({ where: { id: pred.id } });
+    expect(dbPred).toBeDefined();
+    expect(dbPred?.matchId).toBe(match.id);
+  });
+
+  // 17. Matching ambiguo
+  test('17. Debería ignorar la vinculación automática si hay coincidencias ambiguas (múltiples candidatos)', async () => {
+    // Crear dos partidos muy similares
+    await prisma.match.create({
+      data: {
+        externalApiId: 'EXCEL-20',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo A',
+        homeTeam: 'México',
+        awayTeam: 'Colombia',
+        kickoffAt: new Date('2026-06-11T18:00:00Z'),
+        status: 'SCHEDULED',
+        resultSource: 'EXCEL',
+      }
+    });
+
+    await prisma.match.create({
+      data: {
+        externalApiId: 'EXCEL-21',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo A',
+        homeTeam: 'Mexico',
+        awayTeam: 'Colombia',
+        kickoffAt: new Date('2026-06-11T18:15:00Z'),
+        status: 'SCHEDULED',
+        resultSource: 'EXCEL',
+      }
+    });
+
+    const fixture: NormalizedFixture = {
+      externalApiId: 'api-real-200',
+      stage: 'GROUP_STAGE',
+      groupName: 'Grupo A',
+      homeTeam: 'Mexico',
+      awayTeam: 'Colombia',
+      kickoffAt: new Date('2026-06-11T18:10:00Z'),
+      status: 'FINISHED',
+      actualHomeScore: 1,
+      actualAwayScore: 0,
+      actualHomePenalties: null,
+      actualAwayPenalties: null,
+      actualWinner: 'Mexico',
+    };
+
+    const status = await processNormalizedFixture(fixture);
+    expect(status).toBe('SKIPPED'); // No se enlaza automáticamente por ambigüedad
+  });
+});
+
+describe('FootballDataProvider Tests', () => {
+  let originalFetch: typeof global.fetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  test('Debería incluir el header X-Auth-Token y baseUrl correcto', async () => {
+    process.env.FOOTBALL_DATA_API_KEY = 'test-token-123';
+    process.env.FOOTBALL_DATA_BASE_URL = 'https://api.test-football.org';
+
+    const mockResponse = {
+      matches: [
+        {
+          id: 1001,
+          utcDate: '2026-06-11T22:00:00Z',
+          status: 'FINISHED',
+          stage: 'GROUP_STAGE',
+          group: 'GROUP_A',
+          homeTeam: { name: 'Mexico' },
+          awayTeam: { name: 'Colombia' },
+          score: {
+            winner: 'HOME_TEAM',
+            duration: 'REGULAR',
+            fullTime: { home: 2, away: 1 }
+          }
+        }
+      ]
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => mockResponse,
+    });
+
+    const { FootballDataProvider: RealFootballDataProvider } = await vi.importActual<typeof import('../lib/football-data-provider')>('../lib/football-data-provider');
+    const provider = new RealFootballDataProvider();
+
+    const fixtures = await provider.fetchTournamentFixtures();
+    
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://api.test-football.org/competitions/WC/matches?season=2026',
+      expect.objectContaining({
+        headers: {
+          'X-Auth-Token': 'test-token-123',
+          'Accept': 'application/json',
+        }
+      })
+    );
+
+    expect(fixtures.length).toBe(1);
+    expect(fixtures[0].externalApiId).toBe('1001');
+    expect(fixtures[0].actualHomeScore).toBe(2);
+    expect(fixtures[0].actualAwayScore).toBe(1);
+    expect(fixtures[0].actualWinner).toBe('Mexico');
+  });
+
+  test('Debería manejar errores de temporada no disponible (403) y rate limit (429)', async () => {
+    const { FootballDataProvider: RealFootballDataProvider } = await vi.importActual<typeof import('../lib/football-data-provider')>('../lib/football-data-provider');
+    const provider = new RealFootballDataProvider();
+
+    // Case A: 403 Forbidden
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ message: 'Free plans do not have access to this season' }),
+    });
+
+    await expect(provider.fetchTournamentFixtures()).rejects.toThrow('API Error: Free plans do not have access to this season');
+
+    // Case B: 429 Rate Limit
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({ message: 'Rate limit exceeded' }),
+    });
+
+    await expect(provider.fetchTournamentFixtures()).rejects.toThrow('API Rate Limit Exceeded');
+  });
+
+  test('Debería normalizar prórroga y penales correctamente', async () => {
+    const mockApiFixture = {
+      id: 2002,
+      utcDate: '2026-07-15T20:00:00Z',
+      status: 'FINISHED',
+      stage: 'FINAL',
+      group: null,
+      homeTeam: { name: 'Argentina' },
+      awayTeam: { name: 'France' },
+      score: {
+        winner: 'HOME_TEAM',
+        duration: 'PENALTY_SHOOTOUT',
+        fullTime: { home: 3, away: 3 },
+        penalties: { home: 4, away: 2 }
+      }
+    };
+
+    const { FootballDataProvider: RealFootballDataProvider } = await vi.importActual<typeof import('../lib/football-data-provider')>('../lib/football-data-provider');
+    const provider = new RealFootballDataProvider();
+
+    const normalized = provider.normalizeFixture(mockApiFixture);
+
+    expect(normalized.externalApiId).toBe('2002');
+    expect(normalized.stage).toBe('FINAL');
+    expect(normalized.actualHomeScore).toBe(3);
+    expect(normalized.actualAwayScore).toBe(3);
+    expect(normalized.actualHomePenalties).toBe(4);
+    expect(normalized.actualAwayPenalties).toBe(2);
+    expect(normalized.actualWinner).toBe('Argentina');
   });
 });
