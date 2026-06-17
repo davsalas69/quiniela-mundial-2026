@@ -4,6 +4,10 @@ import { syncTournament, processNormalizedFixture } from '../lib/sync-service';
 import { ApiFootballProvider } from '../lib/api-football-provider';
 import { FootballDataProvider } from '../lib/football-data-provider';
 import { NormalizedFixture } from '../lib/results-provider';
+import { previewPredictionImport, confirmPredictionImport } from '../lib/excel-parser';
+import * as XLSX from 'xlsx';
+import fs from 'fs';
+import path from 'path';
 
 // Mock the provider classes
 vi.mock('../lib/api-football-provider');
@@ -668,5 +672,236 @@ describe('FootballDataProvider Tests', () => {
     expect(normalized.actualHomePenalties).toBe(4);
     expect(normalized.actualAwayPenalties).toBe(2);
     expect(normalized.actualWinner).toBe('Argentina');
+  });
+});
+
+describe('Excel Predictions Import Tests', () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-01T00:00:00Z'));
+    
+    // Clean up tables
+    await prisma.score.deleteMany({});
+    await prisma.prediction.deleteMany({});
+    await prisma.match.deleteMany({});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Helper to create mock excel buffers
+  function createMockWorkbookBuffer(rows: any[][], sheetName = 'Hoja1'): Buffer {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  }
+
+  test('Debería leer un archivo Excel real con 72 filas y procesar correctamente', async () => {
+    const filePath = path.join(process.cwd(), 'data', 'Quiniela-David.xlsx');
+    expect(fs.existsSync(filePath)).toBe(true);
+
+    const buffer = fs.readFileSync(filePath);
+    const report = await previewPredictionImport(buffer);
+
+    expect(report.totalRows).toBe(72);
+    expect(report.items.length).toBe(72);
+    expect(report.sheetName).toBe('Hoja1');
+  });
+
+  test('Debería validar goles inválidos (negativos, decimales, vacíos)', async () => {
+    const m1 = await prisma.match.create({
+      data: {
+        externalApiId: 'pred-test-1',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo A',
+        homeTeam: 'México',
+        awayTeam: 'Sudáfrica',
+        kickoffAt: new Date('2026-06-11T18:00:00Z'),
+        status: 'SCHEDULED',
+        resultSource: 'NONE',
+      }
+    });
+
+    const rows = [
+      ['#', 'FECHA', 'EQUIPO 1', 'GRUPO', 'RESULTADOS', '', 'EQUIPO 2'],
+      [1, 46184.583333333336, 'México', 'A', -1, 2, 'Sudáfrica'], // Negativo
+      [2, 46184.583333333336, 'México', 'A', 1.5, 2, 'Sudáfrica'], // Decimal
+      [3, 46184.583333333336, 'México', 'A', '', '', 'Sudáfrica'], // Vacío (Ignorado)
+      [4, 46184.583333333336, 'México', 'A', 2, '', 'Sudáfrica'], // Uno vacío (Inválido)
+    ];
+
+    const buffer = createMockWorkbookBuffer(rows);
+    const report = await previewPredictionImport(buffer);
+
+    expect(report.totalRows).toBe(4);
+    // Row 1: Negativo -> INVALID
+    expect(report.items[0].status).toBe('INVALID');
+    expect(report.items[0].action).toBe('ERROR');
+    // Row 2: Decimal -> INVALID
+    expect(report.items[1].status).toBe('INVALID');
+    expect(report.items[1].action).toBe('ERROR');
+    // Row 3: Vacío -> VALID (action NONE)
+    expect(report.items[2].status).toBe('VALID');
+    expect(report.items[2].action).toBe('NONE');
+    // Row 4: Uno vacío -> INVALID
+    expect(report.items[3].status).toBe('INVALID');
+    expect(report.items[3].action).toBe('ERROR');
+  });
+
+  test('Debería manejar coincidencia exacta, alias y tolerancia de fecha', async () => {
+    const m1 = await prisma.match.create({
+      data: {
+        externalApiId: 'pred-test-2',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo A',
+        homeTeam: 'USA',
+        awayTeam: 'South Korea',
+        kickoffAt: new Date('2026-06-12T12:00:00Z'),
+        status: 'SCHEDULED',
+        resultSource: 'NONE',
+      }
+    });
+
+    const rows = [
+      ['#', 'FECHA', 'EQUIPO 1', 'GRUPO', 'RESULTADOS', '', 'EQUIPO 2'],
+      [1, 46186.0, 'EE.UU.', 'A', 3, 1, 'R. de Corea'],
+    ];
+
+    const buffer = createMockWorkbookBuffer(rows);
+    const report = await previewPredictionImport(buffer);
+
+    expect(report.matchedCount).toBe(1);
+    expect(report.items[0].status).toBe('VALID');
+    expect(report.items[0].action).toBe('CREATE');
+    expect(report.items[0].matchedMatch?.id).toBe(m1.id);
+  });
+
+  test('Debería detectar partidos no encontrados o ambiguos', async () => {
+    const rows1 = [
+      ['#', 'FECHA', 'EQUIPO 1', 'GRUPO', 'RESULTADOS', '', 'EQUIPO 2'],
+      [1, 46184.0, 'Inexistente 1', 'A', 1, 1, 'Inexistente 2'],
+    ];
+    const buffer1 = createMockWorkbookBuffer(rows1);
+    const report1 = await previewPredictionImport(buffer1);
+    expect(report1.notFoundCount).toBe(1);
+    expect(report1.items[0].status).toBe('NOT_FOUND');
+
+    await prisma.match.create({
+      data: {
+        externalApiId: 'ambig-1',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo A',
+        homeTeam: 'México',
+        awayTeam: 'Sudáfrica',
+        kickoffAt: new Date('2026-06-11T12:00:00Z'),
+        status: 'SCHEDULED',
+        resultSource: 'NONE',
+      }
+    });
+    await prisma.match.create({
+      data: {
+        externalApiId: 'ambig-2',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo A',
+        homeTeam: 'México',
+        awayTeam: 'Sudáfrica',
+        kickoffAt: new Date('2026-06-11T13:00:00Z'),
+        status: 'SCHEDULED',
+        resultSource: 'NONE',
+      }
+    });
+
+    const rows2 = [
+      ['#', 'FECHA', 'EQUIPO 1', 'GRUPO', 'RESULTADOS', '', 'EQUIPO 2'],
+      [1, 46184.5, 'México', 'A', 2, 2, 'Sudáfrica'],
+    ];
+    const buffer2 = createMockWorkbookBuffer(rows2);
+    const report2 = await previewPredictionImport(buffer2);
+    expect(report2.ambiguousCount).toBe(1);
+    expect(report2.items[0].status).toBe('AMBIGUOUS');
+  });
+
+  test('Debería bloquear la actualización si el partido ya comenzó o terminó', async () => {
+    const m1 = await prisma.match.create({
+      data: {
+        externalApiId: 'started-1',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo B',
+        homeTeam: 'Canadá',
+        awayTeam: 'Honduras',
+        kickoffAt: new Date('2026-06-12T12:00:00Z'),
+        status: 'IN_PROGRESS',
+        resultSource: 'NONE',
+      }
+    });
+
+    const m2 = await prisma.match.create({
+      data: {
+        externalApiId: 'finished-1',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo B',
+        homeTeam: 'Canadá',
+        awayTeam: 'El Salvador',
+        kickoffAt: new Date('2026-06-12T12:00:00Z'),
+        status: 'FINISHED',
+        resultSource: 'NONE',
+      }
+    });
+
+    const rows = [
+      ['#', 'FECHA', 'EQUIPO 1', 'GRUPO', 'RESULTADOS', '', 'EQUIPO 2'],
+      [1, 46185.5, 'Canadá', 'B', 1, 0, 'Honduras'],
+      [2, 46185.5, 'Canadá', 'B', 2, 0, 'El Salvador'],
+    ];
+
+    const buffer = createMockWorkbookBuffer(rows);
+    const report = await previewPredictionImport(buffer);
+
+    expect(report.blockedCount).toBe(2);
+    expect(report.items[0].status).toBe('BLOCKED');
+    expect(report.items[1].status).toBe('BLOCKED');
+  });
+
+  test('Debería guardar en base de datos de forma atómica y no tocar resultados reales', async () => {
+    const m1 = await prisma.match.create({
+      data: {
+        externalApiId: 'atom-1',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo A',
+        homeTeam: 'México',
+        awayTeam: 'Sudáfrica',
+        kickoffAt: new Date('2026-06-11T18:00:00Z'),
+        status: 'SCHEDULED',
+        resultSource: 'NONE',
+        actualHomeScore: 4,
+        actualAwayScore: 4,
+      }
+    });
+
+    const rows = [
+      ['#', 'FECHA', 'EQUIPO 1', 'GRUPO', 'RESULTADOS', '', 'EQUIPO 2'],
+      [1, 46184.583333333336, 'México', 'A', 2, 1, 'Sudáfrica'],
+    ];
+
+    const buffer = createMockWorkbookBuffer(rows);
+    const result = await confirmPredictionImport(buffer);
+
+    expect(result.success).toBe(true);
+    expect(result.createdCount).toBe(1);
+
+    const dbMatch = await prisma.match.findUnique({
+      where: { id: m1.id },
+      include: { prediction: true }
+    });
+
+    expect(dbMatch?.prediction).toBeDefined();
+    expect(dbMatch?.prediction?.predictedHomeScore).toBe(2);
+    expect(dbMatch?.prediction?.predictedAwayScore).toBe(1);
+
+    expect(dbMatch?.actualHomeScore).toBe(4);
+    expect(dbMatch?.actualAwayScore).toBe(4);
+    expect(dbMatch?.resultSource).toBe('NONE');
   });
 });

@@ -11,7 +11,9 @@ import {
   exportDataAction,
   syncTournamentAction,
   compareExcelBackupAction,
-  importExcelBackupAction
+  importExcelBackupAction,
+  previewPredictionImportAction,
+  confirmPredictionImportAction
 } from '../actions';
 import { 
   RefreshCw, 
@@ -129,6 +131,87 @@ export default function SettingsClient({
     awayTeam: '',
     kickoffAt: '',
   });
+  
+  // Prediction import states
+  const [predictionFile, setPredictionFile] = useState<File | null>(null);
+  const [predictionPreview, setPredictionPreview] = useState<any | null>(null);
+  const [predictionError, setPredictionError] = useState<string | null>(null);
+  const [predictionStatus, setPredictionStatus] = useState<'IDLE' | 'ANALYZING' | 'PREVIEW' | 'IMPORTING' | 'SUCCESS' | 'ERROR'>('IDLE');
+  const [predictionResult, setPredictionResult] = useState<any | null>(null);
+
+  const handlePredictionFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) return;
+
+    if (selectedFile.size > 2 * 1024 * 1024) {
+      setPredictionError('El archivo excede el límite máximo de 2 MB.');
+      setPredictionStatus('ERROR');
+      return;
+    }
+
+    const ext = selectedFile.name.split('.').pop()?.toLowerCase();
+    if (ext !== 'xlsx' && ext !== 'xls') {
+      setPredictionError('Formato inválido. Solo se admiten archivos .xlsx o .xls.');
+      setPredictionStatus('ERROR');
+      return;
+    }
+
+    setPredictionFile(selectedFile);
+    setPredictionStatus('ANALYZING');
+    setPredictionError(null);
+    setPredictionPreview(null);
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+
+    try {
+      const res = await previewPredictionImportAction(formData);
+      if (res.success && res.report) {
+        setPredictionPreview(res.report);
+        setPredictionStatus('PREVIEW');
+      } else {
+        setPredictionError(res.message || 'Error al procesar la vista previa.');
+        setPredictionStatus('ERROR');
+      }
+    } catch (err: any) {
+      setPredictionError(err.message || 'Error de conexión.');
+      setPredictionStatus('ERROR');
+    }
+  };
+
+  const handleConfirmPredictionImport = async () => {
+    if (!predictionFile) return;
+
+    setPredictionStatus('IMPORTING');
+    setPredictionError(null);
+
+    const formData = new FormData();
+    formData.append('file', predictionFile);
+
+    try {
+      const res = await confirmPredictionImportAction(formData);
+      if (res.success && res.result) {
+        setPredictionResult(res.result);
+        setPredictionStatus('SUCCESS');
+        // Reload page to refresh predictions
+        window.location.reload();
+      } else {
+        setPredictionError(res.message || 'Error al confirmar la importación.');
+        setPredictionStatus('ERROR');
+      }
+    } catch (err: any) {
+      setPredictionError(err.message || 'Error al guardar las predicciones.');
+      setPredictionStatus('ERROR');
+    }
+  };
+
+  const handleCancelPredictionImport = () => {
+    setPredictionFile(null);
+    setPredictionPreview(null);
+    setPredictionError(null);
+    setPredictionResult(null);
+    setPredictionStatus('IDLE');
+  };
 
   // Acciones de Base de Datos
   const handleRecalculate = () => {
@@ -612,6 +695,257 @@ export default function SettingsClient({
             )}
           </div>
         )}
+      </div>
+
+      {/* Card: Predictions Bulk Upload Section */}
+      <div className="p-6 rounded-2xl bg-[#0f0f15]/75 border border-[#1e1e24] space-y-6">
+        <div>
+          <h3 className="font-extrabold text-lg tracking-tight flex items-center space-x-2">
+            <span className="p-1.5 rounded-lg bg-[#059669]/10 text-[#34d399]">
+              <Database className="h-5 w-5" />
+            </span>
+            <span>Predicciones</span>
+          </h3>
+          <p className="text-xs text-zinc-500 mt-1 font-medium">
+            Importa pronósticos masivamente desde un archivo Excel.
+          </p>
+        </div>
+
+        {predictionStatus === 'IDLE' && (
+          <div className="flex flex-col items-center justify-center p-8 border border-dashed border-[#272733] rounded-xl bg-[#0a0a0f] hover:bg-[#0f0f15] transition-all duration-200">
+            <input
+              type="file"
+              id="prediction-file-input"
+              accept=".xlsx, .xls"
+              onChange={handlePredictionFileChange}
+              className="hidden"
+            />
+            <label
+              htmlFor="prediction-file-input"
+              className="px-6 py-3 rounded-lg bg-[#059669] hover:bg-[#047857] text-xs font-bold text-white transition-all duration-200 cursor-pointer flex items-center space-x-2 shadow-lg shadow-emerald-950/25 animate-pulse"
+            >
+              <span>Cargar predicciones</span>
+            </label>
+            <span className="text-[10px] text-zinc-500 mt-3 font-medium">
+              Solo archivos .xlsx y .xls (Máx. 2 MB)
+            </span>
+          </div>
+        )}
+
+        {predictionStatus === 'ANALYZING' && (
+          <div className="flex flex-col items-center justify-center p-8 border border-[#272733] rounded-xl bg-[#0a0a0f]">
+            <RefreshCw className="h-8 w-8 text-[#34d399] animate-spin" />
+            <span className="text-xs text-zinc-300 font-bold mt-4">Analizando archivo…</span>
+            <span className="text-[10px] text-zinc-500 mt-1">Leyendo datos y buscando coincidencias</span>
+          </div>
+        )}
+
+        {predictionStatus === 'ERROR' && (
+          <div className="p-6 border border-rose-950/30 rounded-xl bg-rose-950/5 space-y-4">
+            <div className="flex items-start space-x-3 text-xs text-rose-300 font-medium">
+              <AlertTriangle className="h-5 w-5 text-rose-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-rose-400">Error al importar</p>
+                <p className="text-rose-400/80 mt-1">{predictionError}</p>
+              </div>
+            </div>
+            <div className="flex space-x-3">
+              <button
+                onClick={handleCancelPredictionImport}
+                className="px-4 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-300 cursor-pointer transition"
+              >
+                Volver a intentar
+              </button>
+            </div>
+          </div>
+        )}
+
+        {predictionStatus === 'PREVIEW' && predictionPreview && (
+          <div className="space-y-5">
+            {/* Summary statistics grid */}
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 text-xs">
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
+                <span className="text-zinc-500 block text-[9px] uppercase font-bold tracking-wider">Filas Leídas</span>
+                <span className="text-base font-black text-zinc-200 mt-1">{predictionPreview.totalRows}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
+                <span className="text-[#34d399] block text-[9px] uppercase font-bold tracking-wider">Coincidencias</span>
+                <span className="text-base font-black text-emerald-400 mt-1">{predictionPreview.matchedCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
+                <span className="text-amber-500 block text-[9px] uppercase font-bold tracking-wider">Nuevas</span>
+                <span className="text-base font-black text-amber-400 mt-1">{predictionPreview.newCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
+                <span className="text-blue-500 block text-[9px] uppercase font-bold tracking-wider">Actualizar</span>
+                <span className="text-base font-black text-blue-400 mt-1">{predictionPreview.updateCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
+                <span className="text-rose-500 block text-[9px] uppercase font-bold tracking-wider">No Encontrados</span>
+                <span className="text-base font-black text-rose-400 mt-1">{predictionPreview.notFoundCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
+                <span className="text-indigo-500 block text-[9px] uppercase font-bold tracking-wider">Ambiguos</span>
+                <span className="text-base font-black text-indigo-400 mt-1">{predictionPreview.ambiguousCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
+                <span className="text-zinc-600 block text-[9px] uppercase font-bold tracking-wider">Bloqueados</span>
+                <span className="text-base font-black text-zinc-500 mt-1">{predictionPreview.blockedCount}</span>
+              </div>
+            </div>
+
+            {/* Info badge */}
+            <div className="text-[11px] text-zinc-400 font-medium bg-[#13131a] p-3 rounded-lg border border-zinc-800/80">
+              Archivo seleccionado: <span className="font-extrabold text-[#34d399]">{predictionFile?.name}</span> • Hoja: <span className="font-bold text-zinc-300">{predictionPreview.sheetName}</span>
+            </div>
+
+            {/* Detailed Table */}
+            <div className="overflow-x-auto border border-zinc-800/80 rounded-xl bg-[#0a0a0f]/95 max-h-96 custom-scrollbar">
+              <table className="w-full border-collapse text-[11px] text-left text-zinc-300">
+                <thead>
+                  <tr className="border-b border-zinc-800 bg-zinc-900/40 text-[10px] text-zinc-400 font-extrabold uppercase tracking-wider sticky top-0 bg-[#0a0a0f] z-10">
+                    <th className="py-2.5 px-3">Fila</th>
+                    <th className="py-2.5 px-3">Fecha</th>
+                    <th className="py-2.5 px-3">Local</th>
+                    <th className="py-2.5 px-3">Visitante</th>
+                    <th className="py-2.5 px-3">Pronóstico</th>
+                    <th className="py-2.5 px-3">Partido Encontrado</th>
+                    <th className="py-2.5 px-3 text-center">Estado</th>
+                    <th className="py-2.5 px-3 text-center">Acción prevista</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-900 font-medium">
+                  {predictionPreview.items.map((item: any, idx: number) => (
+                    <tr key={idx} className="hover:bg-zinc-900/20 transition-colors">
+                      <td className="py-2.5 px-3 text-zinc-500 font-mono">#{item.rowNumber}</td>
+                      <td className="py-2.5 px-3 text-zinc-400">
+                        {item.excelDate ? new Date(item.excelDate).toLocaleDateString('es-ES') : '-'}
+                      </td>
+                      <td className="py-2.5 px-3 font-bold text-zinc-200">{item.homeTeam}</td>
+                      <td className="py-2.5 px-3 font-bold text-zinc-200">{item.awayTeam}</td>
+                      <td className="py-2.5 px-3">
+                        <span className="bg-[#13131a] px-2 py-0.5 rounded border border-zinc-800 font-bold font-mono">
+                          {item.prediction}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        {item.matchedMatch ? (
+                          <span className="text-zinc-400">
+                            {item.matchedMatch.homeTeam} vs {item.matchedMatch.awayTeam}
+                          </span>
+                        ) : (
+                          <span className="text-rose-500/80 italic">{item.reason || 'Sin coincidencia'}</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase ${
+                          item.status === 'VALID' ? 'bg-emerald-950/45 text-emerald-400 border border-emerald-900/30' :
+                          item.status === 'INVALID' ? 'bg-rose-950/45 text-rose-400 border border-rose-900/30' :
+                          item.status === 'NOT_FOUND' ? 'bg-zinc-800 text-zinc-400 border border-zinc-700' :
+                          item.status === 'AMBIGUOUS' ? 'bg-indigo-950/45 text-indigo-400 border border-indigo-900/30' :
+                          'bg-amber-950/45 text-amber-400 border border-amber-900/30' // BLOCKED
+                        }`}>
+                          {item.status}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                          item.action === 'CREATE' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                          item.action === 'UPDATE' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
+                          item.action === 'ERROR' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
+                          'bg-zinc-800/40 text-zinc-500 border border-zinc-800'
+                        } border`}>
+                          {item.action === 'CREATE' ? 'CREAR' :
+                           item.action === 'UPDATE' ? 'ACTUALIZAR' :
+                           item.action === 'ERROR' ? 'ERROR' : 'IGNORAR'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Confirm Actions */}
+            <div className="flex space-x-3.5 pt-2">
+              <button
+                onClick={handleConfirmPredictionImport}
+                className="px-5 py-2.5 rounded-lg bg-[#059669] hover:bg-[#047857] text-xs font-bold text-white transition-all duration-200 cursor-pointer flex items-center space-x-1.5 shadow-lg shadow-emerald-950/20"
+              >
+                <Check className="h-4 w-4" />
+                <span>Confirmar importación</span>
+              </button>
+              <button
+                onClick={handleCancelPredictionImport}
+                className="px-5 py-2.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-300 transition-all duration-200 cursor-pointer"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+
+        {predictionStatus === 'IMPORTING' && (
+          <div className="flex flex-col items-center justify-center p-8 border border-[#272733] rounded-xl bg-[#0a0a0f]">
+            <RefreshCw className="h-8 w-8 text-[#34d399] animate-spin" />
+            <span className="text-xs text-zinc-300 font-bold mt-4">Importando pronósticos…</span>
+            <span className="text-[10px] text-zinc-500 mt-1">Guardando datos en la base de datos de forma segura</span>
+          </div>
+        )}
+
+        {predictionStatus === 'SUCCESS' && predictionResult && (
+          <div className="p-6 border border-emerald-950/30 rounded-xl bg-emerald-950/5 space-y-5 animate-fade-in">
+            <div className="flex items-start space-x-3 text-xs text-emerald-300 font-medium">
+              <Check className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-emerald-400">Importación completada</p>
+                <p className="text-emerald-400/80 mt-1">{predictionResult.message}</p>
+              </div>
+            </div>
+
+            {/* Success summary stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 text-xs">
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
+                <span className="text-emerald-400 block text-[9px] uppercase font-bold tracking-wider">Creados</span>
+                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.createdCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
+                <span className="text-blue-400 block text-[9px] uppercase font-bold tracking-wider">Actualizados</span>
+                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.updatedCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
+                <span className="text-zinc-500 block text-[9px] uppercase font-bold tracking-wider">Ignorados</span>
+                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.ignoredCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
+                <span className="text-amber-500 block text-[9px] uppercase font-bold tracking-wider">Bloqueados</span>
+                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.blockedCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
+                <span className="text-rose-500 block text-[9px] uppercase font-bold tracking-wider">No Encontrados</span>
+                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.notFoundCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
+                <span className="text-indigo-500 block text-[9px] uppercase font-bold tracking-wider">Ambiguos</span>
+                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.ambiguousCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900">
+                <span className="text-rose-400 block text-[9px] uppercase font-bold tracking-wider">Errores</span>
+                <span className="text-base font-black text-zinc-200 mt-1">{predictionResult.errorCount}</span>
+              </div>
+            </div>
+
+            <div className="flex space-x-3 pt-2">
+              <button
+                onClick={handleCancelPredictionImport}
+                className="px-4 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-300 cursor-pointer transition"
+              >
+                Finalizar
+              </button>
+            </div>
+          </div>
+        )}
+
       </div>
 
       {/* Manual Match CRUD Title & Button */}

@@ -6,7 +6,7 @@ import { prisma } from '@/lib/db';
 import { calculateMatchScore } from '@/lib/scoring';
 import { revalidatePath } from 'next/cache';
 import { syncTournament } from '@/lib/sync-service';
-import { compareDatabaseWithExcel, importExcelBackup } from '@/lib/excel-parser';
+import { compareDatabaseWithExcel, importExcelBackup, previewPredictionImport, confirmPredictionImport } from '@/lib/excel-parser';
 
 function safeRevalidatePath(path: string) {
   try {
@@ -571,6 +571,78 @@ export async function importExcelBackupAction() {
     return {
       success: false,
       message: err.message || 'Error al importar datos desde Excel',
+    };
+  }
+}
+
+export async function previewPredictionImportAction(formData: FormData) {
+  try {
+    const file = formData.get('file') as File;
+    if (!file) {
+      return { success: false, message: 'No se seleccionó ningún archivo' };
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      return { success: false, message: 'El archivo excede el límite máximo de 2 MB' };
+    }
+
+    const filename = file.name.toLowerCase();
+    if (!filename.endsWith('.xlsx') && !filename.endsWith('.xls')) {
+      return { success: false, message: 'Formato inválido. Solo se admiten archivos .xlsx o .xls' };
+    }
+
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    const report = await previewPredictionImport(buffer);
+    return {
+      success: true,
+      report,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err.message || 'Error al procesar la vista previa del archivo Excel',
+    };
+  }
+}
+
+export async function confirmPredictionImportAction(formData: FormData) {
+  try {
+    const file = formData.get('file') as File;
+    if (!file) {
+      return { success: false, message: 'No se seleccionó ningún archivo' };
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      return { success: false, message: 'El archivo excede el límite máximo de 2 MB' };
+    }
+
+    const filename = file.name.toLowerCase();
+    if (!filename.endsWith('.xlsx') && !filename.endsWith('.xls')) {
+      return { success: false, message: 'Formato de archivo no admitido' };
+    }
+
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    const result = await confirmPredictionImport(buffer);
+
+    safeRevalidatePath('/');
+    safeRevalidatePath('/predictions');
+    safeRevalidatePath('/results');
+    safeRevalidatePath('/scores');
+    safeRevalidatePath('/settings');
+
+    return {
+      success: true,
+      message: result.message,
+      result,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err.message || 'Error al confirmar la importación de predicciones',
     };
   }
 }
