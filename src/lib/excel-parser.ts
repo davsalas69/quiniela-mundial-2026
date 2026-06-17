@@ -304,6 +304,7 @@ export async function compareDatabaseWithExcel(): Promise<ComparisonReport> {
 // Prediction Bulk Import Section
 export interface NormalizedPredictionRow {
   rowNumber: number;
+  matchId?: string | null;
   matchNumber: number | null;
   kickoffAt: Date | null;
   homeTeam: string;
@@ -350,6 +351,10 @@ export interface PredictionPreviewReport {
   recalculatedCount: number;
   items: PredictionPreviewItem[];
   sheetName: string;
+  importMethod: 'MATCH_ID' | 'LEGACY';
+  matchIdFoundCount: number;
+  matchIdNotFoundCount: number;
+  ignoredCount: number;
 }
 
 export interface PredictionConfirmReport {
@@ -366,13 +371,120 @@ export interface PredictionConfirmReport {
   errorCount: number;
 }
 
+export function generatePredictionTemplate(matches: any[]): Buffer {
+  const headers = [
+    'matchId',
+    'número de partido',
+    'fecha',
+    'hora',
+    'grupo/fase',
+    'equipo local',
+    'pronóstico local',
+    'pronóstico visitante',
+    'equipo visitante',
+    'estado del partido'
+  ];
+
+  const sheetData = [headers];
+
+  for (const m of matches) {
+    let dateStr = '';
+    let timeStr = '';
+    if (m.kickoffAt) {
+      const d = new Date(m.kickoffAt);
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = d.getFullYear();
+      dateStr = `${day}/${month}/${year}`;
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      timeStr = `${hours}:${minutes}`;
+    }
+
+    const homeScore = m.prediction?.predictedHomeScore !== undefined && m.prediction?.predictedHomeScore !== null
+      ? m.prediction.predictedHomeScore
+      : '';
+    const awayScore = m.prediction?.predictedAwayScore !== undefined && m.prediction?.predictedAwayScore !== null
+      ? m.prediction.predictedAwayScore
+      : '';
+
+    sheetData.push([
+      m.id,
+      m.externalApiId || '',
+      dateStr,
+      timeStr,
+      m.groupName || m.stage || '',
+      m.homeTeam,
+      homeScore,
+      awayScore,
+      m.awayTeam,
+      m.status || ''
+    ]);
+  }
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(sheetData);
+
+  // Set column widths
+  ws['!cols'] = [
+    { wch: 38 }, // A: matchId
+    { wch: 18 }, // B: número de partido
+    { wch: 12 }, // C: fecha
+    { wch: 10 }, // D: hora
+    { wch: 15 }, // E: grupo/fase
+    { wch: 22 }, // F: equipo local
+    { wch: 18 }, // G: pronóstico local
+    { wch: 20 }, // H: pronóstico visitante
+    { wch: 22 }, // I: equipo visitante
+    { wch: 15 }  // J: estado del partido
+  ];
+
+  // Freeze top row
+  ws['!views'] = [{ state: 'frozen', ySplit: 1 }];
+
+  // Add validation: integer 0 to 20 for columns G and H (rows 2 to N)
+  ws['!dataValidation'] = [
+    {
+      sqref: `G2:H${sheetData.length + 10}`,
+      type: 'whole',
+      operator: 'between',
+      formula1: '0',
+      formula2: '20',
+      showInputMessage: true,
+      promptTitle: 'Goles',
+      prompt: 'Ingresa un entero entre 0 y 20'
+    }
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Pronosticos');
+
+  // Instrucciones sheet
+  const instructions = [
+    ['INSTRUCCIONES PARA LA CARGA DE PRONÓSTICOS'],
+    [''],
+    ['1. NO modifique las columnas matchId, número de partido, fecha, hora, grupo/fase, equipo local, equipo visitante y estado.'],
+    ['2. Complete únicamente las columnas "pronóstico local" y "pronóstico visitante" con números enteros entre 0 y 20.'],
+    ['3. Si deja ambas celdas vacías para un partido, el pronóstico no se registrará o se omitirá.'],
+    ['4. Los partidos que ya han comenzado o finalizado se pueden actualizar, pero requerirán confirmación administrativa.'],
+    ['5. Una vez completada la plantilla, guárdela y súbala a través de la sección "Cargar predicciones".']
+  ];
+  const wsInst = XLSX.utils.aoa_to_sheet(instructions);
+  wsInst['!cols'] = [{ wch: 100 }];
+  XLSX.utils.book_append_sheet(wb, wsInst, 'Instrucciones');
+
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
 export function parsePredictionWorkbook(buffer: Buffer): { rows: any[][]; sheetName: string } {
   const workbook = XLSX.read(buffer, { type: 'buffer' });
   if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
     throw new Error('El archivo no contiene hojas legibles');
   }
 
-  let sheetName = workbook.SheetNames.find(name => name.toLowerCase() === 'hoja1');
+  let sheetName = workbook.SheetNames.find(name => name.toLowerCase() === 'pronosticos');
+  if (!sheetName) {
+    sheetName = workbook.SheetNames.find(name => name.toLowerCase() === 'hoja1');
+  }
   if (!sheetName) {
     sheetName = workbook.SheetNames[0];
   }
@@ -382,48 +494,286 @@ export function parsePredictionWorkbook(buffer: Buffer): { rows: any[][]; sheetN
   return { rows: rawRows, sheetName };
 }
 
-export function normalizePredictionRow(row: any[], rowNumber: number): NormalizedPredictionRow {
-  const matchNumRaw = row[0];
-  const dateRaw = row[1];
-  const homeTeamRaw = row[2];
-  const groupRaw = row[3];
-  const homeScoreRaw = row[4];
-  const awayScoreRaw = row[5];
-  const awayTeamRaw = row[6];
+export function normalizePredictionRow(row: any[], rowNumber: number, isOfficial: boolean): NormalizedPredictionRow {
+  if (isOfficial) {
+    const matchIdRaw = row[0];
+    const matchNumRaw = row[1];
+    const dateRaw = row[2];
+    const timeRaw = row[3];
+    const groupRaw = row[4];
+    const homeTeamRaw = row[5];
+    const homeScoreRaw = row[6];
+    const awayScoreRaw = row[7];
+    const awayTeamRaw = row[8];
+    const statusRaw = row[9];
 
-  let matchNumber: number | null = null;
-  if (matchNumRaw !== undefined && matchNumRaw !== null && matchNumRaw !== '') {
-    const parseNum = Number(matchNumRaw);
-    if (!isNaN(parseNum)) {
-      matchNumber = Math.floor(parseNum);
+    const matchId = matchIdRaw ? String(matchIdRaw).trim() : null;
+    let matchNumber: number | null = null;
+    if (matchNumRaw !== undefined && matchNumRaw !== null && matchNumRaw !== '') {
+      const parseNum = Number(matchNumRaw);
+      if (!isNaN(parseNum)) {
+        matchNumber = Math.floor(parseNum);
+      }
     }
-  }
 
-  const homeTeam = String(homeTeamRaw || '').trim();
-  const awayTeam = String(awayTeamRaw || '').trim();
-  const group = String(groupRaw || '').trim();
+    const homeTeam = String(homeTeamRaw || '').trim();
+    const awayTeam = String(awayTeamRaw || '').trim();
+    const group = String(groupRaw || '').trim();
 
-  if (!homeTeam || !awayTeam) {
+    if (!matchId) {
+      return {
+        rowNumber,
+        matchId: null,
+        matchNumber,
+        kickoffAt: null,
+        homeTeam,
+        awayTeam,
+        group,
+        predictedHomeScore: null,
+        predictedAwayScore: null,
+        isValid: false,
+        error: 'El campo matchId es obligatorio y no puede estar vacío.'
+      };
+    }
+
+    let kickoffAt: Date | null = null;
+    if (dateRaw) {
+      kickoffAt = excelDateToDate(dateRaw);
+      if (timeRaw && kickoffAt) {
+        if (typeof timeRaw === 'number') {
+          const totalSeconds = Math.round(timeRaw * 24 * 60 * 60);
+          const hours = Math.floor(totalSeconds / 3600);
+          const minutes = Math.floor((totalSeconds % 3600) / 60);
+          kickoffAt.setHours(hours, minutes, 0, 0);
+        } else if (typeof timeRaw === 'string') {
+          const parts = timeRaw.split(':');
+          if (parts.length >= 2) {
+            const hours = parseInt(parts[0], 10);
+            const minutes = parseInt(parts[1], 10);
+            if (!isNaN(hours) && !isNaN(minutes)) {
+              kickoffAt.setHours(hours, minutes, 0, 0);
+            }
+          }
+        }
+      }
+    }
+
+    const isHomeEmpty = homeScoreRaw === undefined || homeScoreRaw === null || String(homeScoreRaw).trim() === '';
+    const isAwayEmpty = awayScoreRaw === undefined || awayScoreRaw === null || String(awayScoreRaw).trim() === '';
+
+    if (isHomeEmpty && isAwayEmpty) {
+      return {
+        rowNumber,
+        matchId,
+        matchNumber,
+        kickoffAt,
+        homeTeam,
+        awayTeam,
+        group,
+        predictedHomeScore: null,
+        predictedAwayScore: null,
+        isValid: true,
+      };
+    }
+
+    if (isHomeEmpty || isAwayEmpty) {
+      return {
+        rowNumber,
+        matchId,
+        matchNumber,
+        kickoffAt,
+        homeTeam,
+        awayTeam,
+        group,
+        predictedHomeScore: null,
+        predictedAwayScore: null,
+        isValid: false,
+        error: 'Debe ingresar pronóstico para ambos equipos'
+      };
+    }
+
+    const homeScoreNum = Number(homeScoreRaw);
+    const awayScoreNum = Number(awayScoreRaw);
+
+    if (isNaN(homeScoreNum) || isNaN(awayScoreNum)) {
+      return {
+        rowNumber,
+        matchId,
+        matchNumber,
+        kickoffAt,
+        homeTeam,
+        awayTeam,
+        group,
+        predictedHomeScore: null,
+        predictedAwayScore: null,
+        isValid: false,
+        error: 'Marcadores deben ser numéricos'
+      };
+    }
+
+    if (!Number.isInteger(homeScoreNum) || !Number.isInteger(awayScoreNum)) {
+      return {
+        rowNumber,
+        matchId,
+        matchNumber,
+        kickoffAt,
+        homeTeam,
+        awayTeam,
+        group,
+        predictedHomeScore: null,
+        predictedAwayScore: null,
+        isValid: false,
+        error: 'Marcadores decimales no permitidos'
+      };
+    }
+
+    if (homeScoreNum < 0 || homeScoreNum > 20 || awayScoreNum < 0 || awayScoreNum > 20) {
+      return {
+        rowNumber,
+        matchId,
+        matchNumber,
+        kickoffAt,
+        homeTeam,
+        awayTeam,
+        group,
+        predictedHomeScore: null,
+        predictedAwayScore: null,
+        isValid: false,
+        error: 'Marcadores fuera de rango (deben ser entre 0 y 20)'
+      };
+    }
+
     return {
       rowNumber,
+      matchId,
       matchNumber,
-      kickoffAt: null,
+      kickoffAt,
       homeTeam,
       awayTeam,
       group,
-      predictedHomeScore: null,
-      predictedAwayScore: null,
-      isValid: false,
-      error: 'Nombres de equipo vacíos'
+      predictedHomeScore: homeScoreNum,
+      predictedAwayScore: awayScoreNum,
+      isValid: true
     };
-  }
 
-  const kickoffAt = dateRaw ? excelDateToDate(dateRaw) : null;
+  } else {
+    const matchNumRaw = row[0];
+    const dateRaw = row[1];
+    const homeTeamRaw = row[2];
+    const groupRaw = row[3];
+    const homeScoreRaw = row[4];
+    const awayScoreRaw = row[5];
+    const awayTeamRaw = row[6];
 
-  const isHomeEmpty = homeScoreRaw === undefined || homeScoreRaw === null || String(homeScoreRaw).trim() === '';
-  const isAwayEmpty = awayScoreRaw === undefined || awayScoreRaw === null || String(awayScoreRaw).trim() === '';
+    let matchNumber: number | null = null;
+    if (matchNumRaw !== undefined && matchNumRaw !== null && matchNumRaw !== '') {
+      const parseNum = Number(matchNumRaw);
+      if (!isNaN(parseNum)) {
+        matchNumber = Math.floor(parseNum);
+      }
+    }
 
-  if (isHomeEmpty && isAwayEmpty) {
+    const homeTeam = String(homeTeamRaw || '').trim();
+    const awayTeam = String(awayTeamRaw || '').trim();
+    const group = String(groupRaw || '').trim();
+
+    if (!homeTeam || !awayTeam) {
+      return {
+        rowNumber,
+        matchNumber,
+        kickoffAt: null,
+        homeTeam,
+        awayTeam,
+        group,
+        predictedHomeScore: null,
+        predictedAwayScore: null,
+        isValid: false,
+        error: 'Nombres de equipo vacíos'
+      };
+    }
+
+    const kickoffAt = dateRaw ? excelDateToDate(dateRaw) : null;
+
+    const isHomeEmpty = homeScoreRaw === undefined || homeScoreRaw === null || String(homeScoreRaw).trim() === '';
+    const isAwayEmpty = awayScoreRaw === undefined || awayScoreRaw === null || String(awayScoreRaw).trim() === '';
+
+    if (isHomeEmpty && isAwayEmpty) {
+      return {
+        rowNumber,
+        matchNumber,
+        kickoffAt,
+        homeTeam,
+        awayTeam,
+        group,
+        predictedHomeScore: null,
+        predictedAwayScore: null,
+        isValid: true,
+      };
+    }
+
+    if (isHomeEmpty || isAwayEmpty) {
+      return {
+        rowNumber,
+        matchNumber,
+        kickoffAt,
+        homeTeam,
+        awayTeam,
+        group,
+        predictedHomeScore: null,
+        predictedAwayScore: null,
+        isValid: false,
+        error: 'Uno de los marcadores pronosticados está vacío'
+      };
+    }
+
+    const homeScoreNum = Number(homeScoreRaw);
+    const awayScoreNum = Number(awayScoreRaw);
+
+    if (isNaN(homeScoreNum) || isNaN(awayScoreNum)) {
+      return {
+        rowNumber,
+        matchNumber,
+        kickoffAt,
+        homeTeam,
+        awayTeam,
+        group,
+        predictedHomeScore: null,
+        predictedAwayScore: null,
+        isValid: false,
+        error: 'Marcadores deben ser numéricos'
+      };
+    }
+
+    if (!Number.isInteger(homeScoreNum) || !Number.isInteger(awayScoreNum)) {
+      return {
+        rowNumber,
+        matchNumber,
+        kickoffAt,
+        homeTeam,
+        awayTeam,
+        group,
+        predictedHomeScore: null,
+        predictedAwayScore: null,
+        isValid: false,
+        error: 'Marcadores decimales no permitidos'
+      };
+    }
+
+    if (homeScoreNum < 0 || homeScoreNum > 20 || awayScoreNum < 0 || awayScoreNum > 20) {
+      return {
+        rowNumber,
+        matchNumber,
+        kickoffAt,
+        homeTeam,
+        awayTeam,
+        group,
+        predictedHomeScore: null,
+        predictedAwayScore: null,
+        isValid: false,
+        error: 'Marcadores fuera de rango (deben ser entre 0 y 20)'
+      };
+    }
+
     return {
       rowNumber,
       matchNumber,
@@ -431,86 +781,11 @@ export function normalizePredictionRow(row: any[], rowNumber: number): Normalize
       homeTeam,
       awayTeam,
       group,
-      predictedHomeScore: null,
-      predictedAwayScore: null,
+      predictedHomeScore: homeScoreNum,
+      predictedAwayScore: awayScoreNum,
       isValid: true,
     };
   }
-
-  if (isHomeEmpty || isAwayEmpty) {
-    return {
-      rowNumber,
-      matchNumber,
-      kickoffAt,
-      homeTeam,
-      awayTeam,
-      group,
-      predictedHomeScore: null,
-      predictedAwayScore: null,
-      isValid: false,
-      error: 'Uno de los marcadores pronosticados está vacío'
-    };
-  }
-
-  const homeScoreNum = Number(homeScoreRaw);
-  const awayScoreNum = Number(awayScoreRaw);
-
-  if (isNaN(homeScoreNum) || isNaN(awayScoreNum)) {
-    return {
-      rowNumber,
-      matchNumber,
-      kickoffAt,
-      homeTeam,
-      awayTeam,
-      group,
-      predictedHomeScore: null,
-      predictedAwayScore: null,
-      isValid: false,
-      error: 'Marcadores deben ser numéricos'
-    };
-  }
-
-  if (!Number.isInteger(homeScoreNum) || !Number.isInteger(awayScoreNum)) {
-    return {
-      rowNumber,
-      matchNumber,
-      kickoffAt,
-      homeTeam,
-      awayTeam,
-      group,
-      predictedHomeScore: null,
-      predictedAwayScore: null,
-      isValid: false,
-      error: 'Marcadores decimales no permitidos'
-    };
-  }
-
-  if (homeScoreNum < 0 || homeScoreNum > 20 || awayScoreNum < 0 || awayScoreNum > 20) {
-    return {
-      rowNumber,
-      matchNumber,
-      kickoffAt,
-      homeTeam,
-      awayTeam,
-      group,
-      predictedHomeScore: null,
-      predictedAwayScore: null,
-      isValid: false,
-      error: 'Marcadores fuera de rango (deben ser entre 0 y 20)'
-    };
-  }
-
-  return {
-    rowNumber,
-    matchNumber,
-    kickoffAt,
-    homeTeam,
-    awayTeam,
-    group,
-    predictedHomeScore: homeScoreNum,
-    predictedAwayScore: awayScoreNum,
-    isValid: true,
-  };
 }
 
 export function matchPredictionToMatch(row: NormalizedPredictionRow, dbMatches: any[]): any[] {
@@ -526,14 +801,20 @@ export function matchPredictionToMatch(row: NormalizedPredictionRow, dbMatches: 
 export async function previewPredictionImport(buffer: Buffer): Promise<PredictionPreviewReport> {
   const { rows, sheetName } = parsePredictionWorkbook(buffer);
   
-  // Find where data rows start (skip headers)
   let headerIndex = -1;
+  let isOfficial = false;
+
   for (let i = 0; i < Math.min(rows.length, 10); i++) {
     const r = rows[i];
-    if (r && r.length > 2) {
-      const isHeader = String(r[0] || '').includes('#') || String(r[2] || '').toLowerCase().includes('equipo');
-      if (isHeader) {
+    if (r && r.length >= 2) {
+      const rowStrings = r.map(cell => String(cell || '').toLowerCase().trim());
+      if (rowStrings.includes('matchid')) {
         headerIndex = i;
+        isOfficial = true;
+        break;
+      } else if (rowStrings.includes('#') || rowStrings.includes('nro') || rowStrings.some(s => s.includes('equipo'))) {
+        headerIndex = i;
+        isOfficial = false;
         break;
       }
     }
@@ -565,10 +846,14 @@ export async function previewPredictionImport(buffer: Buffer): Promise<Predictio
   let updateHistoryCount = 0;
   let recalculatedCount = 0;
 
+  let matchIdFoundCount = 0;
+  let matchIdNotFoundCount = 0;
+  let ignoredCount = 0;
+
   for (let idx = 0; idx < dataRows.length; idx++) {
     const row = dataRows[idx];
     const rowNumber = startRowIndex + idx + 1;
-    const normalized = normalizePredictionRow(row, rowNumber);
+    const normalized = normalizePredictionRow(row, rowNumber, isOfficial);
 
     if (!normalized.isValid) {
       invalidCount++;
@@ -587,11 +872,65 @@ export async function previewPredictionImport(buffer: Buffer): Promise<Predictio
       continue;
     }
 
-    const candidates = matchPredictionToMatch(normalized, dbMatches);
+    if (normalized.predictedHomeScore === null && normalized.predictedAwayScore === null) {
+      ignoredCount++;
+      let matchedMatchObj: any = null;
+      if (isOfficial && normalized.matchId) {
+        const found = dbMatches.find(db => db.id === normalized.matchId);
+        if (found) {
+          matchIdFoundCount++;
+          matchedMatchObj = {
+            id: found.id,
+            homeTeam: found.homeTeam,
+            awayTeam: found.awayTeam,
+            kickoffAt: found.kickoffAt ? found.kickoffAt.toISOString() : null,
+            status: found.status,
+          };
+        } else {
+          matchIdNotFoundCount++;
+        }
+      } else {
+        const candidates = matchPredictionToMatch(normalized, dbMatches);
+        if (candidates.length === 1) {
+          matchedMatchObj = {
+            id: candidates[0].id,
+            homeTeam: candidates[0].homeTeam,
+            awayTeam: candidates[0].awayTeam,
+            kickoffAt: candidates[0].kickoffAt ? candidates[0].kickoffAt.toISOString() : null,
+            status: candidates[0].status,
+          };
+        }
+      }
 
-    const predictionStr = (normalized.predictedHomeScore !== null && normalized.predictedAwayScore !== null)
-      ? `${normalized.predictedHomeScore} - ${normalized.predictedAwayScore}`
-      : 'Sin pronóstico';
+      items.push({
+        rowNumber,
+        matchNumber: normalized.matchNumber,
+        excelDate: normalized.kickoffAt ? normalized.kickoffAt.toISOString() : null,
+        homeTeam: normalized.homeTeam,
+        awayTeam: normalized.awayTeam,
+        prediction: 'Sin pronóstico',
+        matchedMatch: matchedMatchObj,
+        status: 'VALID',
+        action: 'NONE',
+        reason: 'Fila vacía o sin pronóstico (ignorado)'
+      });
+      continue;
+    }
+
+    let candidates: any[] = [];
+    if (isOfficial) {
+      const found = dbMatches.find(db => db.id === normalized.matchId);
+      if (found) {
+        candidates = [found];
+        matchIdFoundCount++;
+      } else {
+        matchIdNotFoundCount++;
+      }
+    } else {
+      candidates = matchPredictionToMatch(normalized, dbMatches);
+    }
+
+    const predictionStr = `${normalized.predictedHomeScore} - ${normalized.predictedAwayScore}`;
 
     if (candidates.length === 0) {
       notFoundCount++;
@@ -605,7 +944,9 @@ export async function previewPredictionImport(buffer: Buffer): Promise<Predictio
         matchedMatch: null,
         status: 'NOT_FOUND',
         action: 'NONE',
-        reason: 'No se encontró un partido coincidente en la base de datos'
+        reason: isOfficial
+          ? 'El matchId especificado no existe en la base de datos'
+          : 'No se encontró un partido coincidente en la base de datos'
       });
     } else if (candidates.length > 1) {
       ambiguousCount++;
@@ -628,102 +969,57 @@ export async function previewPredictionImport(buffer: Buffer): Promise<Predictio
 
       if (hasStarted) {
         validCount++;
-        const hasPrediction = normalized.predictedHomeScore !== null && normalized.predictedAwayScore !== null;
+        const action = dbMatch.prediction ? 'UPDATE_RECALCULATE' : 'CREATE_RECALCULATE';
+        if (action === 'CREATE_RECALCULATE') newHistoryCount++;
+        else updateHistoryCount++;
         
-        if (!hasPrediction) {
-          items.push({
-            rowNumber,
-            matchNumber: normalized.matchNumber,
-            excelDate: normalized.kickoffAt ? normalized.kickoffAt.toISOString() : null,
-            homeTeam: normalized.homeTeam,
-            awayTeam: normalized.awayTeam,
-            prediction: predictionStr,
-            matchedMatch: {
-              id: dbMatch.id,
-              homeTeam: dbMatch.homeTeam,
-              awayTeam: dbMatch.awayTeam,
-              kickoffAt: dbMatch.kickoffAt ? dbMatch.kickoffAt.toISOString() : null,
-              status: dbMatch.status,
-            },
-            status: 'VALID',
-            action: 'NONE',
-            isAdministrative: true,
-            reason: 'Partido ya iniciado/finalizado sin pronóstico asignado'
-          });
-        } else {
-          const action = dbMatch.prediction ? 'UPDATE_RECALCULATE' : 'CREATE_RECALCULATE';
-          if (action === 'CREATE_RECALCULATE') newHistoryCount++;
-          else updateHistoryCount++;
-          
-          if (dbMatch.actualHomeScore !== null && dbMatch.actualAwayScore !== null) {
-            recalculatedCount++;
-          }
-
-          items.push({
-            rowNumber,
-            matchNumber: normalized.matchNumber,
-            excelDate: normalized.kickoffAt ? normalized.kickoffAt.toISOString() : null,
-            homeTeam: normalized.homeTeam,
-            awayTeam: normalized.awayTeam,
-            prediction: predictionStr,
-            matchedMatch: {
-              id: dbMatch.id,
-              homeTeam: dbMatch.homeTeam,
-              awayTeam: dbMatch.awayTeam,
-              kickoffAt: dbMatch.kickoffAt ? dbMatch.kickoffAt.toISOString() : null,
-              status: dbMatch.status,
-            },
-            status: 'VALID',
-            action,
-            isAdministrative: true,
-            reason: action === 'CREATE_RECALCULATE' ? 'Crear pronóstico histórico y recalcular' : 'Actualizar pronóstico histórico y recalcular'
-          });
+        if (dbMatch.actualHomeScore !== null && dbMatch.actualAwayScore !== null) {
+          recalculatedCount++;
         }
+
+        items.push({
+          rowNumber,
+          matchNumber: normalized.matchNumber,
+          excelDate: normalized.kickoffAt ? normalized.kickoffAt.toISOString() : null,
+          homeTeam: normalized.homeTeam,
+          awayTeam: normalized.awayTeam,
+          prediction: predictionStr,
+          matchedMatch: {
+            id: dbMatch.id,
+            homeTeam: dbMatch.homeTeam,
+            awayTeam: dbMatch.awayTeam,
+            kickoffAt: dbMatch.kickoffAt ? dbMatch.kickoffAt.toISOString() : null,
+            status: dbMatch.status,
+          },
+          status: 'VALID',
+          action,
+          isAdministrative: true,
+          reason: action === 'CREATE_RECALCULATE' ? 'Crear pronóstico histórico y recalcular' : 'Actualizar pronóstico histórico y recalcular'
+        });
       } else {
         validCount++;
-        if (normalized.predictedHomeScore === null || normalized.predictedAwayScore === null) {
-          items.push({
-            rowNumber,
-            matchNumber: normalized.matchNumber,
-            excelDate: normalized.kickoffAt ? normalized.kickoffAt.toISOString() : null,
-            homeTeam: normalized.homeTeam,
-            awayTeam: normalized.awayTeam,
-            prediction: predictionStr,
-            matchedMatch: {
-              id: dbMatch.id,
-              homeTeam: dbMatch.homeTeam,
-              awayTeam: dbMatch.awayTeam,
-              kickoffAt: dbMatch.kickoffAt ? dbMatch.kickoffAt.toISOString() : null,
-              status: dbMatch.status,
-            },
-            status: 'VALID',
-            action: 'NONE',
-            reason: 'Fila válida sin pronóstico asignado'
-          });
-        } else {
-          const action = dbMatch.prediction ? 'UPDATE' : 'CREATE';
-          if (action === 'CREATE') newFutureCount++;
-          else updateFutureCount++;
+        const action = dbMatch.prediction ? 'UPDATE' : 'CREATE';
+        if (action === 'CREATE') newFutureCount++;
+        else updateFutureCount++;
 
-          items.push({
-            rowNumber,
-            matchNumber: normalized.matchNumber,
-            excelDate: normalized.kickoffAt ? normalized.kickoffAt.toISOString() : null,
-            homeTeam: normalized.homeTeam,
-            awayTeam: normalized.awayTeam,
-            prediction: predictionStr,
-            matchedMatch: {
-              id: dbMatch.id,
-              homeTeam: dbMatch.homeTeam,
-              awayTeam: dbMatch.awayTeam,
-              kickoffAt: dbMatch.kickoffAt ? dbMatch.kickoffAt.toISOString() : null,
-              status: dbMatch.status,
-            },
-            status: 'VALID',
-            action,
-            reason: action === 'CREATE' ? 'Crear nueva predicción' : 'Actualizar predicción existente'
-          });
-        }
+        items.push({
+          rowNumber,
+          matchNumber: normalized.matchNumber,
+          excelDate: normalized.kickoffAt ? normalized.kickoffAt.toISOString() : null,
+          homeTeam: normalized.homeTeam,
+          awayTeam: normalized.awayTeam,
+          prediction: predictionStr,
+          matchedMatch: {
+            id: dbMatch.id,
+            homeTeam: dbMatch.homeTeam,
+            awayTeam: dbMatch.awayTeam,
+            kickoffAt: dbMatch.kickoffAt ? dbMatch.kickoffAt.toISOString() : null,
+            status: dbMatch.status,
+          },
+          status: 'VALID',
+          action,
+          reason: action === 'CREATE' ? 'Crear nueva predicción' : 'Actualizar predicción existente'
+        });
       }
     }
   }
@@ -743,6 +1039,10 @@ export async function previewPredictionImport(buffer: Buffer): Promise<Predictio
     recalculatedCount,
     items,
     sheetName,
+    importMethod: isOfficial ? 'MATCH_ID' : 'LEGACY',
+    matchIdFoundCount,
+    matchIdNotFoundCount,
+    ignoredCount,
   };
 }
 
@@ -807,7 +1107,6 @@ export async function confirmPredictionImport(buffer: Buffer): Promise<Predictio
                 else updatedFutureCount++;
               }
 
-              // Retrieve the full match from the transaction to get real score details
               const dbMatch = await tx.match.findUnique({
                 where: { id: item.matchedMatch.id },
               });
@@ -816,7 +1115,6 @@ export async function confirmPredictionImport(buffer: Buffer): Promise<Predictio
                 throw new Error(`Partido con ID ${item.matchedMatch.id} no encontrado en DB`);
               }
 
-              // Point Recalculation if result exists
               if (dbMatch.actualHomeScore !== null && dbMatch.actualAwayScore !== null) {
                 const predInput = {
                   predictedHomeScore: home,

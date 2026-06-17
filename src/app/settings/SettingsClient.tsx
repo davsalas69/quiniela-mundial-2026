@@ -26,7 +26,8 @@ import {
   X, 
   Check, 
   Calendar,
-  AlertTriangle
+  AlertTriangle,
+  Upload
 } from 'lucide-react';
 
 interface Match {
@@ -216,6 +217,10 @@ export default function SettingsClient({
     if (wasSuccess) {
       window.location.reload();
     }
+  };
+
+  const handleDownloadTemplate = () => {
+    window.location.href = '/api/predictions/template';
   };
 
   // Acciones de Base de Datos
@@ -717,23 +722,55 @@ export default function SettingsClient({
         </div>
 
         {predictionStatus === 'IDLE' && (
-          <div className="flex flex-col items-center justify-center p-8 border border-dashed border-[#272733] rounded-xl bg-[#0a0a0f] hover:bg-[#0f0f15] transition-all duration-200">
-            <input
-              type="file"
-              id="prediction-file-input"
-              accept=".xlsx, .xls"
-              onChange={handlePredictionFileChange}
-              className="hidden"
-            />
-            <label
-              htmlFor="prediction-file-input"
-              className="px-6 py-3 rounded-lg bg-[#059669] hover:bg-[#047857] text-xs font-bold text-white transition-all duration-200 cursor-pointer flex items-center space-x-2 shadow-lg shadow-emerald-950/25 animate-pulse"
-            >
-              <span>Cargar predicciones</span>
-            </label>
-            <span className="text-[10px] text-zinc-500 mt-3 font-medium">
-              Solo archivos .xlsx y .xls (Máx. 2 MB)
-            </span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Step 1: Download template */}
+            <div className="p-5 rounded-xl border border-zinc-800 bg-[#0a0a0f] hover:bg-[#0f0f15]/50 transition duration-200 flex flex-col justify-between space-y-4">
+              <div className="space-y-2">
+                <h4 className="text-sm font-bold text-zinc-200 flex items-center space-x-2">
+                  <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-400 text-xs flex items-center justify-center font-bold">1</span>
+                  <span>Descargar plantilla</span>
+                </h4>
+                <p className="text-xs text-zinc-505 mt-1 font-medium leading-relaxed text-zinc-500">
+                  Descarga una plantilla basada en los partidos actuales para evitar errores de coincidencia.
+                </p>
+              </div>
+              <button
+                onClick={handleDownloadTemplate}
+                className="w-full py-2.5 px-4 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-bold text-zinc-300 transition flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <Download className="h-4 w-4 text-[#34d399]" />
+                <span>Descargar plantilla</span>
+              </button>
+            </div>
+
+            {/* Step 2: Upload predictions */}
+            <div className="p-5 rounded-xl border border-zinc-800 bg-[#0a0a0f] hover:bg-[#0f0f15]/50 transition duration-200 flex flex-col justify-between space-y-4">
+              <div className="space-y-2">
+                <h4 className="text-sm font-bold text-zinc-200 flex items-center space-x-2">
+                  <span className="w-5 h-5 rounded-full bg-emerald-950/40 text-emerald-400 text-xs flex items-center justify-center font-bold">2</span>
+                  <span>Cargar predicciones</span>
+                </h4>
+                <p className="text-xs text-zinc-505 mt-1 font-medium leading-relaxed text-zinc-500">
+                  Completa únicamente las columnas de pronóstico y vuelve a subir el archivo.
+                </p>
+              </div>
+              <div className="w-full">
+                <input
+                  type="file"
+                  id="prediction-file-input"
+                  accept=".xlsx, .xls"
+                  onChange={handlePredictionFileChange}
+                  className="hidden"
+                />
+                <label
+                  htmlFor="prediction-file-input"
+                  className="w-full py-2.5 px-4 rounded-lg bg-[#059669] hover:bg-[#047857] text-xs font-bold text-white transition flex items-center justify-center space-x-2 cursor-pointer text-center"
+                >
+                  <Upload className="h-4 w-4" />
+                  <span>Cargar predicciones</span>
+                </label>
+              </div>
+            </div>
           </div>
         )}
 
@@ -767,18 +804,60 @@ export default function SettingsClient({
 
         {predictionStatus === 'PREVIEW' && predictionPreview && (
           <div className="space-y-5">
+            {/* Method info indicator */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border border-zinc-800 bg-[#0a0a0f]/90 gap-4">
+              <div>
+                <span className="text-zinc-505 text-[10px] uppercase font-bold tracking-wider block text-zinc-500">Método de Importación</span>
+                <span className={`text-xs font-black uppercase inline-flex items-center space-x-1.5 mt-1 ${
+                  predictionPreview.importMethod === 'MATCH_ID' ? 'text-emerald-400' : 'text-amber-400'
+                }`}>
+                  {predictionPreview.importMethod === 'MATCH_ID' ? (
+                    <>
+                      <Check className="h-4 w-4" />
+                      <span>Coincidencia por matchId (Plantilla Oficial)</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="h-4 w-4" />
+                      <span>Coincidencia por datos legacy</span>
+                    </>
+                  )}
+                </span>
+              </div>
+              <div className="text-[11px] text-zinc-400 font-medium">
+                Archivo: <span className="font-extrabold text-[#34d399]">{predictionFile?.name}</span> • Hoja: <span className="font-bold text-zinc-300">{predictionPreview.sheetName}</span>
+              </div>
+            </div>
+
+            {/* Legacy warning message */}
+            {predictionPreview.importMethod === 'LEGACY' && (
+              <div className="p-3.5 rounded-xl border border-amber-500/25 bg-amber-500/5 text-xs text-amber-300 font-medium flex items-start space-x-2.5">
+                <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-amber-400">Advertencia de archivo antiguo</p>
+                  <p className="text-amber-400/80 mt-0.5 leading-relaxed">
+                    Este archivo no contiene matchId y se procesará mediante coincidencia por equipos y fecha. Para mayor precisión, descargue la plantilla oficial.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Summary statistics grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 text-xs">
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
                 <span className="text-zinc-500 block text-[9px] uppercase font-bold tracking-wider">Filas Leídas</span>
                 <span className="text-base font-black text-zinc-200 mt-1">{predictionPreview.totalRows}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
-                <span className="text-[#34d399] block text-[9px] uppercase font-bold tracking-wider">Coincidencias</span>
-                <span className="text-base font-black text-emerald-400 mt-1">{predictionPreview.matchedCount}</span>
+                <span className="text-emerald-500 block text-[9px] uppercase font-bold tracking-wider">matchId Encontrados</span>
+                <span className="text-base font-black text-emerald-400 mt-1">{predictionPreview.matchIdFoundCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
-                <span className="text-amber-500 block text-[9px] uppercase font-bold tracking-wider">Creados (Fut)</span>
+                <span className="text-rose-500 block text-[9px] uppercase font-bold tracking-wider">matchId Inexistentes</span>
+                <span className="text-base font-black text-rose-400 mt-1">{predictionPreview.matchIdNotFoundCount}</span>
+              </div>
+              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
+                <span className="text-amber-500 block text-[9px] uppercase font-bold tracking-wider">Nuevos (Fut)</span>
                 <span className="text-base font-black text-amber-400 mt-1">{predictionPreview.newFutureCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
@@ -786,7 +865,7 @@ export default function SettingsClient({
                 <span className="text-base font-black text-blue-400 mt-1">{predictionPreview.updateFutureCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
-                <span className="text-orange-500 block text-[9px] uppercase font-bold tracking-wider">Creados (Hist)</span>
+                <span className="text-orange-500 block text-[9px] uppercase font-bold tracking-wider">Nuevos (Hist)</span>
                 <span className="text-base font-black text-orange-400 mt-1">{predictionPreview.newHistoryCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
@@ -798,27 +877,15 @@ export default function SettingsClient({
                 <span className="text-base font-black text-teal-400 mt-1">{predictionPreview.recalculatedCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
-                <span className="text-rose-500 block text-[9px] uppercase font-bold tracking-wider">No Encontrados</span>
-                <span className="text-base font-black text-rose-400 mt-1">{predictionPreview.notFoundCount}</span>
-              </div>
-              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
-                <span className="text-indigo-500 block text-[9px] uppercase font-bold tracking-wider">Ambiguos</span>
-                <span className="text-base font-black text-indigo-400 mt-1">{predictionPreview.ambiguousCount}</span>
+                <span className="text-zinc-400 block text-[9px] uppercase font-bold tracking-wider">Ignorados</span>
+                <span className="text-base font-black text-zinc-300 mt-1">{predictionPreview.ignoredCount}</span>
               </div>
               <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
                 <span className="text-red-500 block text-[9px] uppercase font-bold tracking-wider">Inválidos</span>
                 <span className="text-base font-black text-red-400 mt-1">{predictionPreview.invalidCount}</span>
               </div>
-              <div className="bg-[#0a0a0f] p-3 rounded-lg border border-zinc-900 flex flex-col justify-between">
-                <span className="text-zinc-600 block text-[9px] uppercase font-bold tracking-wider">Errores</span>
-                <span className="text-base font-black text-zinc-500 mt-1">0</span>
-              </div>
             </div>
 
-            {/* Info badge */}
-            <div className="text-[11px] text-zinc-400 font-medium bg-[#13131a] p-3 rounded-lg border border-zinc-800/80">
-              Archivo seleccionado: <span className="font-extrabold text-[#34d399]">{predictionFile?.name}</span> • Hoja: <span className="font-bold text-zinc-300">{predictionPreview.sheetName}</span>
-            </div>
 
             {/* Detailed Table */}
             <div className="overflow-x-auto border border-zinc-800/80 rounded-xl bg-[#0a0a0f]/95 max-h-96 custom-scrollbar">

@@ -4,7 +4,7 @@ import { syncTournament, processNormalizedFixture } from '../lib/sync-service';
 import { ApiFootballProvider } from '../lib/api-football-provider';
 import { FootballDataProvider } from '../lib/football-data-provider';
 import { NormalizedFixture } from '../lib/results-provider';
-import { previewPredictionImport, confirmPredictionImport } from '../lib/excel-parser';
+import { previewPredictionImport, confirmPredictionImport, generatePredictionTemplate } from '../lib/excel-parser';
 import { upsertPrediction } from '../app/actions';
 import * as XLSX from 'xlsx';
 import fs from 'fs';
@@ -1134,6 +1134,130 @@ describe('Individual Predictions Administrative Tests', () => {
 
     expect(dbMatch?.prediction).toBeNull();
     spy.mockRestore();
+  });
+});
+
+describe('Official Template Generation and Import Tests', () => {
+  test('Debería generar una plantilla oficial con matchId y formato correcto', async () => {
+    const m = await prisma.match.create({
+      data: {
+        externalApiId: 'real-match-1',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo A',
+        homeTeam: 'Ecuador',
+        awayTeam: 'Senegal',
+        kickoffAt: new Date('2026-06-12T12:00:00Z'),
+        status: 'SCHEDULED'
+      }
+    });
+
+    const matches = await prisma.match.findMany({
+      include: { prediction: true }
+    });
+    const buffer = generatePredictionTemplate(matches);
+    expect(buffer).toBeInstanceOf(Buffer);
+
+    const wb = XLSX.read(buffer, { type: 'buffer' });
+    expect(wb.SheetNames).toContain('Pronosticos');
+    expect(wb.SheetNames).toContain('Instrucciones');
+
+    const ws = wb.Sheets['Pronosticos'];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+    expect(rows[0]).toEqual([
+      'matchId',
+      'número de partido',
+      'fecha',
+      'hora',
+      'grupo/fase',
+      'equipo local',
+      'pronóstico local',
+      'pronóstico visitante',
+      'equipo visitante',
+      'estado del partido'
+    ]);
+
+    const mRow = rows.find(r => r[0] === m.id);
+    expect(mRow).toBeDefined();
+    expect(mRow?.[5]).toBe('Ecuador');
+    expect(mRow?.[8]).toBe('Senegal');
+  });
+
+  test('Debería previsualizar e importar la plantilla oficial en modo MATCH_ID', async () => {
+    const mFuture = await prisma.match.create({
+      data: {
+        externalApiId: 'real-match-future',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo A',
+        homeTeam: 'Mexico',
+        awayTeam: 'Poland',
+        kickoffAt: new Date('2026-06-25T18:00:00Z'),
+        status: 'SCHEDULED'
+      }
+    });
+
+    const mFinished = await prisma.match.create({
+      data: {
+        externalApiId: 'real-match-finished',
+        stage: 'GROUP_STAGE',
+        groupName: 'Grupo A',
+        homeTeam: 'USA',
+        awayTeam: 'Wales',
+        kickoffAt: new Date('2026-06-12T18:00:00Z'),
+        status: 'FINISHED',
+        resultSource: 'MANUAL_REAL',
+        actualHomeScore: 1,
+        actualAwayScore: 1
+      }
+    });
+
+    const rows = [
+      ['matchId', 'número de partido', 'fecha', 'hora', 'grupo/fase', 'equipo local', 'pronóstico local', 'pronóstico visitante', 'equipo visitante', 'estado del partido'],
+      [mFuture.id, '', '25/06/2026', '18:00', 'Grupo A', 'Mexico', 2, 1, 'Poland', 'SCHEDULED'],
+      [mFinished.id, '', '12/06/2026', '18:00', 'Grupo A', 'USA', 1, 1, 'Wales', 'FINISHED']
+    ];
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, 'Pronosticos');
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    const preview = await previewPredictionImport(buffer);
+    expect(preview.importMethod).toBe('MATCH_ID');
+    expect(preview.matchIdFoundCount).toBe(2);
+    expect(preview.matchIdNotFoundCount).toBe(0);
+    expect(preview.totalRows).toBe(2);
+    expect(preview.validCount).toBe(2);
+    expect(preview.newFutureCount).toBe(1);
+    expect(preview.newHistoryCount).toBe(1);
+
+    const futureItem = preview.items.find(item => item.matchedMatch?.id === mFuture.id);
+    expect(futureItem?.action).toBe('CREATE');
+    expect(futureItem?.isAdministrative).toBeFalsy();
+
+    const finishedItem = preview.items.find(item => item.matchedMatch?.id === mFinished.id);
+    expect(finishedItem?.action).toBe('CREATE_RECALCULATE');
+    expect(finishedItem?.isAdministrative).toBe(true);
+
+    const confirm = await confirmPredictionImport(buffer);
+    expect(confirm.success).toBe(true);
+    expect(confirm.createdFutureCount).toBe(1);
+    expect(confirm.createdHistoryCount).toBe(1);
+    expect(confirm.recalculatedCount).toBe(1);
+
+    const dbFuture = await prisma.match.findUnique({
+      where: { id: mFuture.id },
+      include: { prediction: true }
+    });
+    expect(dbFuture?.prediction?.predictedHomeScore).toBe(2);
+    expect(dbFuture?.prediction?.predictedAwayScore).toBe(1);
+
+    const dbFinished = await prisma.match.findUnique({
+      where: { id: mFinished.id },
+      include: { prediction: true, score: true }
+    });
+    expect(dbFinished?.prediction?.predictedHomeScore).toBe(1);
+    expect(dbFinished?.prediction?.predictedAwayScore).toBe(1);
+    expect(dbFinished?.score?.points).toBe(6);
   });
 });
 
