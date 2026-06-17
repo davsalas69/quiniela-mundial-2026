@@ -43,3 +43,7 @@ next-env.d.ts
 # local database
 /dev.db
 /prisma/dev.db
+
+# data excel backups
+/data/*.xlsx
+

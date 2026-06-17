@@ -2,8 +2,26 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaLibSql } from '@prisma/adapter-libsql';
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
+import fs from 'fs';
+import path from 'path';
 
-const databaseUrl = process.env.DATABASE_URL || 'file:./dev.db';
+const getProviderFromSchema = (): 'postgresql' | 'sqlite' => {
+  try {
+    const schemaPath = path.join(process.cwd(), 'prisma', 'schema.prisma');
+    if (fs.existsSync(schemaPath)) {
+      const content = fs.readFileSync(schemaPath, 'utf8');
+      if (content.includes('provider = "sqlite"')) {
+        return 'sqlite';
+      }
+    }
+  } catch (e) {
+    // Fallback if file not readable or not found
+  }
+  return 'postgresql';
+};
+
+const isSqlite = getProviderFromSchema() === 'sqlite';
+const databaseUrl = process.env.DATABASE_URL || (isSqlite ? 'file:./dev.db' : 'postgresql://localhost:5432/dummy');
 
 const getPrismaClient = (): PrismaClient => {
   if (databaseUrl.startsWith('postgres://') || databaseUrl.startsWith('postgresql://')) {

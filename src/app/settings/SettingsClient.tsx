@@ -8,7 +8,9 @@ import {
   createMatchAction,
   updateMatchAction,
   deleteMatchAction,
-  exportDataAction
+  exportDataAction,
+  syncTournamentAction,
+  compareExcelBackupAction
 } from '../actions';
 import { 
   RefreshCw, 
@@ -20,7 +22,8 @@ import {
   Trash, 
   X, 
   Check, 
-  Calendar 
+  Calendar,
+  AlertTriangle
 } from 'lucide-react';
 
 interface Match {
@@ -32,9 +35,60 @@ interface Match {
   kickoffAt: string | Date | null;
 }
 
-export default function SettingsClient({ initialMatches }: { initialMatches: Match[] }) {
+export default function SettingsClient({ 
+  initialMatches,
+  initialLastSyncLog,
+  isApiKeyConfigured
+}: { 
+  initialMatches: Match[];
+  initialLastSyncLog: any;
+  isApiKeyConfigured: boolean;
+}) {
   const [matches, setMatches] = useState<Match[]>(initialMatches);
   const [isPending, startTransition] = useTransition();
+
+  const [lastSyncLog, setLastSyncLog] = useState<any>(initialLastSyncLog);
+  const [excelReport, setExcelReport] = useState<any>(null);
+  const [excelError, setExcelError] = useState<string | null>(null);
+  const [syncLoadingType, setSyncLoadingType] = useState<string | null>(null);
+
+  const handleSync = (type: 'FULL' | 'DAILY' | 'LIVE' | 'MANUAL') => {
+    setSyncLoadingType(type);
+    startTransition(async () => {
+      try {
+        const res = await syncTournamentAction(type);
+        if (res.success) {
+          alert('Sincronización completada: ' + res.message);
+          window.location.reload();
+        } else {
+          alert('Fallo en sincronización: ' + res.message);
+          window.location.reload();
+        }
+      } catch (err: any) {
+        alert('Error: ' + err.message);
+      } finally {
+        setSyncLoadingType(null);
+      }
+    });
+  };
+
+  const handleCompareExcel = () => {
+    startTransition(async () => {
+      try {
+        const res = await compareExcelBackupAction();
+        if (res.success) {
+          setExcelReport(res.report);
+          setExcelError(null);
+        } else {
+          setExcelError(res.message || 'Error desconocido');
+          setExcelReport(null);
+        }
+      } catch (err: any) {
+        setExcelError(err.message || 'Error al conectar con el servidor');
+        setExcelReport(null);
+      }
+    });
+  };
 
   // Estado para la creación de un nuevo partido
   const [showAddForm, setShowAddForm] = useState(false);
@@ -296,6 +350,233 @@ export default function SettingsClient({ initialMatches }: { initialMatches: Mat
           </button>
         </div>
 
+      </div>
+
+      {/* 2026 World Cup Sync Section */}
+      <div className="p-6 rounded-2xl bg-[#0f0f15]/75 border border-[#1e1e24] space-y-6">
+        <div>
+          <h3 className="font-extrabold text-lg tracking-tight flex items-center space-x-2">
+            <span className="p-1.5 rounded-lg bg-[#6d28d9]/10 text-[#a78bfa]">
+              <RefreshCw className="h-5 w-5" />
+            </span>
+            <span>Sincronización del Mundial 2026</span>
+          </h3>
+          <p className="text-xs text-zinc-500 mt-1 font-medium">
+            Sincroniza automáticamente los partidos, horarios y resultados oficiales de la API de API-Football.
+          </p>
+        </div>
+
+        {/* API Key Status Check */}
+        {!isApiKeyConfigured && (
+          <div className="p-4 rounded-xl bg-amber-950/20 border border-amber-900/30 flex items-start space-x-3 text-xs text-amber-300 font-medium">
+            <AlertTriangle className="h-4.5 w-4.5 shrink-0 text-amber-500" />
+            <div>
+              <p className="font-bold">API Key Ausente / No Configurada</p>
+              <p className="text-amber-400/80 mt-1">
+                La variable de entorno <code className="bg-[#13131a] px-1.5 py-0.5 rounded text-amber-300 font-mono">API_FOOTBALL_KEY</code> no está presente en el servidor.
+                Deberás configurarla en Vercel o en tu archivo local para habilitar la importación en tiempo real.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Action Buttons */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3.5">
+          <button
+            onClick={() => handleSync('FULL')}
+            disabled={isPending || !isApiKeyConfigured}
+            className="px-4 py-2.5 rounded-lg bg-[#6d28d9]/15 hover:bg-[#6d28d9]/25 disabled:bg-zinc-900/45 disabled:text-zinc-600 disabled:border-zinc-800/40 border border-[#6d28d9]/30 text-xs font-bold text-[#a78bfa] transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1.5"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${syncLoadingType === 'FULL' ? 'animate-spin' : ''}`} />
+            <span>Calendario Completo</span>
+          </button>
+
+          <button
+            onClick={() => handleSync('MANUAL')}
+            disabled={isPending || !isApiKeyConfigured}
+            className="px-4 py-2.5 rounded-lg bg-emerald-950/20 hover:bg-emerald-950/40 disabled:bg-zinc-900/45 disabled:text-zinc-600 disabled:border-zinc-800/40 border border-emerald-900/30 text-xs font-bold text-emerald-400 transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1.5"
+          >
+            <Check className={`h-3.5 w-3.5 ${syncLoadingType === 'MANUAL' ? 'animate-pulse' : ''}`} />
+            <span>Actualizar Resultados</span>
+          </button>
+
+          <button
+            onClick={() => handleSync('DAILY')}
+            disabled={isPending || !isApiKeyConfigured}
+            className="px-4 py-2.5 rounded-lg bg-blue-950/20 hover:bg-blue-950/40 disabled:bg-zinc-900/45 disabled:text-zinc-600 disabled:border-zinc-800/40 border border-blue-900/30 text-xs font-bold text-blue-400 transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1.5"
+          >
+            <Calendar className={`h-3.5 w-3.5 ${syncLoadingType === 'DAILY' ? 'animate-pulse' : ''}`} />
+            <span>Partidos de Hoy</span>
+          </button>
+
+          <button
+            onClick={() => handleSync('LIVE')}
+            disabled={isPending || !isApiKeyConfigured}
+            className="px-4 py-2.5 rounded-lg bg-rose-950/20 hover:bg-rose-950/40 disabled:bg-zinc-900/45 disabled:text-zinc-600 disabled:border-zinc-800/40 border border-rose-950/30 text-xs font-bold text-rose-400 transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1.5"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${syncLoadingType === 'LIVE' ? 'animate-spin' : ''}`} />
+            <span>Partidos en Vivo</span>
+          </button>
+
+          <button
+            onClick={handleCompareExcel}
+            disabled={isPending}
+            className="px-4 py-2.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 border border-zinc-800 text-xs font-bold text-zinc-300 transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1.5"
+          >
+            <Database className="h-3.5 w-3.5" />
+            <span>Comparar Excel</span>
+          </button>
+        </div>
+
+        {/* Last Sync Logs Summary */}
+        <div className="p-5 rounded-xl bg-[#13131a] border border-[#1e1e24] space-y-4">
+          <div className="flex justify-between items-center text-xs font-bold border-b border-zinc-800 pb-3">
+            <span className="text-zinc-400 uppercase tracking-wider">Historial de Sincronización</span>
+            <span className="text-zinc-500">Último Log</span>
+          </div>
+
+          {lastSyncLog ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+              <div className="space-y-1">
+                <span className="text-zinc-500">Fecha y Hora:</span>
+                <p className="font-extrabold text-zinc-200">
+                  {new Date(lastSyncLog.startedAt).toLocaleString('es-ES')}
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-zinc-500">Método / Estado:</span>
+                <p className="flex items-center space-x-1.5 font-extrabold">
+                  <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
+                    {lastSyncLog.syncType}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded font-black ${
+                    lastSyncLog.status === 'SUCCESS' 
+                      ? 'bg-emerald-950/40 text-emerald-400' 
+                      : lastSyncLog.status === 'FAILED'
+                      ? 'bg-rose-950/40 text-rose-400'
+                      : 'bg-amber-950/40 text-amber-400'
+                  }`}>
+                    {lastSyncLog.status}
+                  </span>
+                </p>
+              </div>
+
+              <div className="space-y-1 col-span-2">
+                <span className="text-zinc-500">Resumen de Registros:</span>
+                <p className="text-zinc-300 font-medium">
+                  Creados: <span className="font-extrabold text-emerald-400">{lastSyncLog.createdCount}</span> • 
+                  Actualizados: <span className="font-extrabold text-blue-400">{lastSyncLog.updatedCount}</span> • 
+                  Ignorados: <span className="font-extrabold text-zinc-500">{lastSyncLog.skippedCount}</span> • 
+                  Errores: <span className="font-extrabold text-rose-400">{lastSyncLog.errorCount}</span>
+                </p>
+              </div>
+
+              {lastSyncLog.message && (
+                <div className="col-span-full pt-2 mt-2 border-t border-dashed border-zinc-800/50">
+                  <span className="text-zinc-500 block mb-1">Detalle del Log:</span>
+                  <p className="font-mono text-[10px] text-zinc-400 bg-[#0f0f15] p-2.5 rounded border border-zinc-900 select-all">
+                    {lastSyncLog.message}
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-center py-4 text-xs text-zinc-500 font-medium">
+              No se han registrado ejecuciones de sincronización.
+            </div>
+          )}
+        </div>
+
+        {/* Excel Comparison Report */}
+        {(excelReport || excelError) && (
+          <div className="p-5 rounded-xl bg-[#13131a] border border-[#1e1e24] space-y-4 animate-fade-in">
+            <div className="flex justify-between items-center text-xs font-bold border-b border-zinc-800 pb-3">
+              <span className="text-zinc-400 uppercase tracking-wider">Reporte de Validación de Respaldo Excel</span>
+              <button 
+                onClick={() => { setExcelReport(null); setExcelError(null); }}
+                className="text-zinc-500 hover:text-zinc-300 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {excelError && (
+              <div className="p-3.5 rounded-lg bg-rose-950/20 border border-rose-900/30 text-xs text-rose-300 font-medium flex items-center space-x-2">
+                <AlertTriangle className="h-4 w-4 text-rose-500 shrink-0" />
+                <span>Error de validación: {excelError}</span>
+              </div>
+            )}
+
+            {excelReport && (
+              <div className="space-y-4 text-xs">
+                {/* Stats grid */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-[#0f0f15] p-3 rounded-lg border border-zinc-900">
+                    <span className="text-zinc-500 block text-[10px] uppercase font-bold tracking-wider">Total Excel (Grupos)</span>
+                    <span className="text-lg font-black text-white">{excelReport.excelGroupMatchesCount}</span>
+                  </div>
+                  <div className="bg-[#0f0f15] p-3 rounded-lg border border-zinc-900">
+                    <span className="text-zinc-500 block text-[10px] uppercase font-bold tracking-wider">Encontrados en BD</span>
+                    <span className="text-lg font-black text-emerald-400">{excelReport.matchedCount}</span>
+                  </div>
+                  <div className="bg-[#0f0f15] p-3 rounded-lg border border-zinc-900">
+                    <span className="text-zinc-500 block text-[10px] uppercase font-bold tracking-wider">Faltantes en BD</span>
+                    <span className={`text-lg font-black ${excelReport.missingInApi.length > 0 ? 'text-rose-400' : 'text-zinc-400'}`}>
+                      {excelReport.missingInApi.length}
+                    </span>
+                  </div>
+                  <div className="bg-[#0f0f15] p-3 rounded-lg border border-zinc-900">
+                    <span className="text-zinc-500 block text-[10px] uppercase font-bold tracking-wider">Fase Final (Excluidos)</span>
+                    <span className="text-lg font-black text-zinc-400">{excelReport.finalStageMatchesCount}</span>
+                  </div>
+                </div>
+
+                {/* Differences List */}
+                {excelReport.differences.length > 0 ? (
+                  <div className="space-y-2.5">
+                    <span className="text-zinc-400 font-bold block">Diferencias detectadas ({excelReport.differences.length}):</span>
+                    <div className="max-h-60 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                      {excelReport.differences.map((diff: any, idx: number) => (
+                        <div key={idx} className="p-3 rounded-lg bg-[#0f0f15] border border-zinc-900/60 space-y-1.5">
+                          <div className="flex justify-between items-center font-bold text-[11px] text-zinc-300">
+                            <span>Juego #{diff.matchNumber || (idx + 1)} • {diff.excelMatch.homeTeam} vs {diff.excelMatch.awayTeam}</span>
+                            <span className="text-amber-500 font-extrabold uppercase text-[10px]">Diferencia</span>
+                          </div>
+                          <ul className="list-disc pl-4 space-y-1 text-zinc-500 text-[10px]">
+                            {diff.diffs.map((d: string, dIdx: number) => (
+                              <li key={dIdx} className="text-amber-400/95">{d}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-900/30 text-emerald-400 font-semibold text-center flex items-center justify-center space-x-2">
+                    <Check className="h-4 w-4" />
+                    <span>¡Todos los partidos del Excel coinciden perfectamente con los registros de la base de datos!</span>
+                  </div>
+                )}
+
+                {/* Missing matches list */}
+                {excelReport.missingInApi.length > 0 && (
+                  <div className="space-y-2">
+                    <span className="text-rose-400 font-bold block">Partidos del Excel no encontrados en la base de datos:</span>
+                    <div className="space-y-1 bg-[#0f0f15] p-3 rounded-lg border border-zinc-900 max-h-40 overflow-y-auto pr-1">
+                      {excelReport.missingInApi.map((m: any, idx: number) => (
+                        <div key={idx} className="flex justify-between py-1 border-b border-zinc-900/50 last:border-b-0 text-[11px]">
+                          <span className="font-bold text-zinc-300">{m.homeTeam} vs {m.awayTeam}</span>
+                          <span className="text-zinc-500 font-medium">{m.groupName || 'Fase de Grupos'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Manual Match CRUD Title & Button */}

@@ -11,7 +11,7 @@ generator client {
 
 model Match {
   id                  String       @id @default(uuid())
-  externalApiId       String?
+  externalApiId       String?      @unique
   stage               String       // Enum representation: GROUP_STAGE, ROUND_OF_32, etc.
   groupName           String?      // Optional, e.g. "Grupo A", "Grupo B"
   homeTeam            String
@@ -52,3 +52,18 @@ model Score {
   reason       String
   calculatedAt DateTime @default(now())
 }
+
+model SyncLog {
+  id           String    @id @default(uuid())
+  provider     String    // e.g. "API-Football"
+  syncType     String    // e.g. "FULL", "DAILY", "LIVE", "MANUAL"
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  status       String    // e.g. "SUCCESS", "FAILED", "IN_PROGRESS"
+  createdCount Int       @default(0)
+  updatedCount Int       @default(0)
+  skippedCount Int       @default(0)
+  errorCount   Int       @default(0)
+  message      String?
+}
+

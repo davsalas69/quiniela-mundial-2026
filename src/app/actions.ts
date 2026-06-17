@@ -5,6 +5,8 @@
 import { prisma } from '@/lib/db';
 import { calculateMatchScore } from '@/lib/scoring';
 import { revalidatePath } from 'next/cache';
+import { syncTournament } from '@/lib/sync-service';
+import { compareDatabaseWithExcel } from '@/lib/excel-parser';
 
 function safeRevalidatePath(path: string) {
   try {
@@ -502,3 +504,42 @@ export async function exportDataAction() {
 
   return JSON.stringify(matches, null, 2);
 }
+
+// 11. Acciones para la integración de API-Football
+export async function syncTournamentAction(syncType: 'FULL' | 'DAILY' | 'LIVE' | 'MANUAL') {
+  const result = await syncTournament(syncType);
+  
+  safeRevalidatePath('/');
+  safeRevalidatePath('/predictions');
+  safeRevalidatePath('/results');
+  safeRevalidatePath('/scores');
+  safeRevalidatePath('/settings');
+  
+  return result;
+}
+
+export async function getLastSyncLogAction() {
+  return await prisma.syncLog.findFirst({
+    orderBy: { startedAt: 'desc' }
+  });
+}
+
+export async function isApiKeyConfiguredAction() {
+  return !!process.env.API_FOOTBALL_KEY;
+}
+
+export async function compareExcelBackupAction() {
+  try {
+    const report = await compareDatabaseWithExcel();
+    return {
+      success: true,
+      report,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err.message || 'Error al procesar el archivo Excel',
+    };
+  }
+}
+

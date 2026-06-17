@@ -11,6 +11,12 @@ export default async function SettingsPage() {
     ],
   });
 
+  const lastSyncLog = await prisma.syncLog.findFirst({
+    orderBy: { startedAt: 'desc' }
+  });
+
+  const isApiKeyConfigured = !!process.env.API_FOOTBALL_KEY;
+
   return (
     <div className="space-y-6">
       <div>
@@ -22,7 +28,12 @@ export default async function SettingsPage() {
         </p>
       </div>
 
-      <SettingsClient initialMatches={matches} />
+      <SettingsClient 
+        initialMatches={matches} 
+        initialLastSyncLog={lastSyncLog}
+        isApiKeyConfigured={isApiKeyConfigured}
+      />
     </div>
   );
 }
+
