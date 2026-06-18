@@ -416,4 +416,45 @@ describe('Multi-User Authentication System Tests', () => {
     expect(currentUser?.username).toBe('Tester');
     expect(mockCookiesStore.get('quiniela_session')?.value).toBe(token);
   });
+
+  test('El cierre de sesión (logoutAction) destruye la sesión activa y limpia las cookies', async () => {
+    // 1. Crear e iniciar sesión del usuario
+    const user = await prisma.user.create({
+      data: {
+        username: 'LogoutTester',
+        normalizedUsername: 'logouttester',
+        passwordHash: hashPassword('SomePass123!'),
+        role: 'USER',
+        isActive: true,
+      }
+    });
+
+    const token = 'token_de_logout_tester_32bytes_value';
+    const tokenHash = require('crypto').createHash('sha256').update(token).digest('hex');
+    await prisma.session.create({
+      data: {
+        tokenHash,
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 1000 * 3600),
+      }
+    });
+    mockCookiesStore.set('quiniela_session', { name: 'quiniela_session', value: token });
+
+    // Verificar que el usuario está logueado
+    let currentUser = await getCurrentUser();
+    expect(currentUser?.username).toBe('LogoutTester');
+
+    // 2. Ejecutar logoutAction
+    try {
+      await logoutAction();
+    } catch (err: any) {
+      // Ignorar o verificar la redirección de Next.js
+    }
+
+    // 3. Confirmar que la cookie fue eliminada o vaciada y la sesión borrada
+    const cookieVal = mockCookiesStore.get('quiniela_session')?.value;
+    expect(!cookieVal).toBe(true);
+    currentUser = await getCurrentUser();
+    expect(currentUser).toBeNull();
+  });
 });

@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { loginAction, registerAction } from '@/app/actions';
+import { loginAction, registerAction, logoutAction } from '@/app/actions';
 import { User, KeyRound, HelpCircle, X, Check, AlertCircle, Sparkles } from 'lucide-react';
 import { validateAccessCode, generateSuggestedCode } from '@/lib/auth-shared';
 
@@ -11,6 +11,7 @@ interface AuthContextType {
   setUser: (user: any | null) => void;
   openAuthModal: (onSuccess?: () => void, initialTab?: 'register' | 'login') => void;
   closeAuthModal: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -37,6 +38,11 @@ export function AuthProvider({
 
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  // Sync state if initialUser prop changes from server layout
+  useEffect(() => {
+    setUser(initialUser);
+  }, [initialUser]);
 
   // Listen to searchParams to open auth modal if ?showAuth=true
   useEffect(() => {
@@ -80,8 +86,27 @@ export function AuthProvider({
     }
   };
 
+  const logout = async () => {
+    try {
+      await logoutAction();
+    } catch (err) {
+      // Catch next.js redirect exception or network error
+    }
+    setUser(null);
+    setOnSuccessCallback(null);
+    setIsOpen(false);
+
+    router.refresh();
+
+    // Redirigir a '/' si el usuario cierra sesión desde una ruta protegida/personal
+    const personalPaths = ['/predictions', '/scores', '/settings'];
+    if (personalPaths.some(p => window.location.pathname.startsWith(p))) {
+      router.replace('/');
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, setUser, openAuthModal, closeAuthModal }}>
+    <AuthContext.Provider value={{ user, setUser, openAuthModal, closeAuthModal, logout }}>
       {children}
       {isOpen && (
         <AuthModal

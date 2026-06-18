@@ -22,7 +22,7 @@ import {
 import Link from 'next/link';
 
 export default function Header() {
-  const { user, openAuthModal } = useAuth();
+  const { user, openAuthModal, logout } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [changeCodeOpen, setChangeCodeOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -40,8 +40,8 @@ export default function Header() {
 
   const handleLogout = async (e: React.FormEvent) => {
     e.preventDefault();
-    await logoutAction();
-    window.location.href = '/';
+    setDropdownOpen(false);
+    await logout();
   };
 
   return (
