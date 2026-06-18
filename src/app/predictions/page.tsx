@@ -11,11 +11,6 @@ export type MatchWithPrediction = Match & {
 };
 
 export default async function PredictionsPage() {
-  const user = await getCurrentUser();
-  if (!user) {
-    redirect('/login');
-  }
-
   const matches: MatchWithPrediction[] = await getMatchesWithData();
 
   return (

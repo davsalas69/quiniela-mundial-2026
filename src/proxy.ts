@@ -7,7 +7,7 @@ export default function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const sessionToken = request.cookies.get(COOKIE_NAME)?.value;
 
-  const publicRoutes = ['/', '/login', '/login/admin', '/register', '/setup'];
+  const publicRoutes = ['/', '/login', '/login/admin', '/register', '/setup', '/predictions'];
   const isPublicRoute = publicRoutes.some(route => pathname === route);
 
   // Excluir recursos estáticos y assets internos
