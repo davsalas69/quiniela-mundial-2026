@@ -6,7 +6,8 @@ import {
   registerAction,
   logoutAction,
   upsertPrediction,
-  getMatchesWithData
+  getMatchesWithData,
+  loginAdminAction
 } from '../app/actions';
 import {
   getCurrentUser,
@@ -304,5 +305,115 @@ describe('Multi-User Authentication System Tests', () => {
     // Intentar obtener el usuario actual (debería retornar null)
     const currentUser = await getCurrentUser();
     expect(currentUser).toBeNull();
+  });
+
+  // --- ESCENARIOS ADICIONALES: Acceso Administrativo Simplificado ---
+  test('Debería loguear al admin usando solo contraseña e ignorando username del payload', async () => {
+    // 1. Configurar admin
+    const adminPassword = 'AdminPassword123!';
+    await prisma.user.create({
+      data: {
+        username: 'admin',
+        normalizedUsername: 'admin',
+        passwordHash: hashPassword(adminPassword),
+        role: 'ADMIN',
+        isActive: true,
+      }
+    });
+
+    // 2. Intentar login de admin sin username en el FormData
+    const fd = new FormData();
+    fd.append('password', adminPassword);
+
+    const loginRes = await loginAdminAction(fd);
+    expect(loginRes.success).toBe(true);
+    expect(loginRes.user?.username).toBe('admin');
+    expect(loginRes.user?.role).toBe('ADMIN');
+    expect(mockCookiesStore.has('quiniela_session')).toBe(true);
+  });
+
+  test('Debería ignorar un username manipulado en el payload y usar siempre admin', async () => {
+    const adminPassword = 'AdminPassword123!';
+    await prisma.user.create({
+      data: {
+        username: 'admin',
+        normalizedUsername: 'admin',
+        passwordHash: hashPassword(adminPassword),
+        role: 'ADMIN',
+        isActive: true,
+      }
+    });
+
+    // Crear otro usuario normal para intentar confundir
+    await prisma.user.create({
+      data: {
+        username: 'attacker',
+        normalizedUsername: 'attacker',
+        passwordHash: hashPassword('SomePassword!'),
+        role: 'USER',
+        isActive: true,
+      }
+    });
+
+    const fd = new FormData();
+    fd.append('username', 'attacker'); // Manipulado
+    fd.append('password', adminPassword); // Contraseña del admin
+
+    // Debería ser exitoso para 'admin' ignorando el username 'attacker'
+    const loginRes = await loginAdminAction(fd);
+    expect(loginRes.success).toBe(true);
+    expect(loginRes.user?.username).toBe('admin');
+  });
+
+  test('Una contraseña incorrecta de admin no debería destruir una sesión de USER activa', async () => {
+    // 1. Crear admin y user
+    const admin = await prisma.user.create({
+      data: {
+        username: 'admin',
+        normalizedUsername: 'admin',
+        passwordHash: hashPassword('AdminPass!'),
+        role: 'ADMIN',
+        isActive: true,
+      }
+    });
+
+    const user = await prisma.user.create({
+      data: {
+        username: 'Tester',
+        normalizedUsername: 'tester',
+        passwordHash: hashPassword('UserPass!'),
+        role: 'USER',
+        isActive: true,
+      }
+    });
+
+    // 2. Iniciar sesión como usuario normal
+    const token = 'token_de_usuario_normal_32bytes_value';
+    const tokenHash = require('crypto').createHash('sha256').update(token).digest('hex');
+    await prisma.session.create({
+      data: {
+        tokenHash,
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 1000 * 3600),
+      }
+    });
+    mockCookiesStore.set('quiniela_session', { name: 'quiniela_session', value: token });
+
+    // Verificar que la sesión de USER está activa
+    let currentUser = await getCurrentUser();
+    expect(currentUser?.username).toBe('Tester');
+
+    // 3. Intentar login de admin con contraseña incorrecta
+    const fd = new FormData();
+    fd.append('password', 'WrongPassword!');
+    const loginRes = await loginAdminAction(fd);
+
+    expect(loginRes.success).toBe(false);
+    expect(loginRes.message).toBe('Contraseña de administrador incorrecta.');
+
+    // 4. Verificar que la sesión de USER sigue intacta
+    currentUser = await getCurrentUser();
+    expect(currentUser?.username).toBe('Tester');
+    expect(mockCookiesStore.get('quiniela_session')?.value).toBe(token);
   });
 });

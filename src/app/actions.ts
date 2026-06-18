@@ -216,14 +216,13 @@ export async function loginAction(formData: FormData) {
  */
 export async function loginAdminAction(formData: FormData) {
   const ip = await getClientIp();
-  const username = (formData.get('username') as string || '').trim();
   const password = formData.get('password') as string;
 
-  if (!username || !password) {
-    return { success: false, message: 'El usuario y la contraseña son requeridos.' };
+  if (!password) {
+    return { success: false, message: 'La contraseña es requerida.' };
   }
 
-  const normalizedUsername = username.toLowerCase();
+  const normalizedUsername = 'admin';
 
   // Rate Limiting
   const rateLimitResult = await checkRateLimit(ip, normalizedUsername);
@@ -239,14 +238,12 @@ export async function loginAdminAction(formData: FormData) {
       where: { normalizedUsername },
     });
 
-    // Solo permitir administradores (role ADMIN)
     if (!user || user.role !== 'ADMIN' || !user.isActive) {
-      return { success: false, message: 'Credenciales inválidas.' };
+      return { success: false, message: 'Contraseña de administrador incorrecta.' };
     }
 
-    // No se normaliza para ADMIN
     if (!verifyPassword(password, user.passwordHash)) {
-      return { success: false, message: 'Credenciales inválidas.' };
+      return { success: false, message: 'Contraseña de administrador incorrecta.' };
     }
 
     await createSession(user.id);
