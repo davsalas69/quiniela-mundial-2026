@@ -798,7 +798,7 @@ export function matchPredictionToMatch(row: NormalizedPredictionRow, dbMatches: 
   });
 }
 
-export async function previewPredictionImport(buffer: Buffer): Promise<PredictionPreviewReport> {
+export async function previewPredictionImport(buffer: Buffer, userId: string): Promise<PredictionPreviewReport> {
   const { rows, sheetName } = parsePredictionWorkbook(buffer);
   
   let headerIndex = -1;
@@ -827,11 +827,18 @@ export async function previewPredictionImport(buffer: Buffer): Promise<Predictio
     throw new Error('El archivo excede el límite máximo de 200 filas');
   }
 
-  const dbMatches = await prisma.match.findMany({
+  const dbMatchesRaw = await prisma.match.findMany({
     include: {
-      prediction: true
+      predictions: {
+        where: { userId }
+      }
     }
   });
+
+  const dbMatches = dbMatchesRaw.map(m => ({
+    ...m,
+    prediction: m.predictions[0] || null
+  }));
 
   const items: PredictionPreviewItem[] = [];
   let validCount = 0;
@@ -1046,8 +1053,8 @@ export async function previewPredictionImport(buffer: Buffer): Promise<Predictio
   };
 }
 
-export async function confirmPredictionImport(buffer: Buffer): Promise<PredictionConfirmReport> {
-  const report = await previewPredictionImport(buffer);
+export async function confirmPredictionImport(buffer: Buffer, userId: string): Promise<PredictionConfirmReport> {
+  const report = await previewPredictionImport(buffer, userId);
   let createdFutureCount = 0;
   let updatedFutureCount = 0;
   let createdHistoryCount = 0;
@@ -1085,10 +1092,15 @@ export async function confirmPredictionImport(buffer: Buffer): Promise<Predictio
             const away = parseInt(parts[1].trim(), 10);
 
             try {
+              const existingPred = await tx.prediction.findFirst({
+                where: { matchId: item.matchedMatch.id, userId }
+              });
+
               if (isCreateAction) {
                 await tx.prediction.create({
                   data: {
                     matchId: item.matchedMatch.id,
+                    userId,
                     predictedHomeScore: home,
                     predictedAwayScore: away,
                   }
@@ -1096,13 +1108,15 @@ export async function confirmPredictionImport(buffer: Buffer): Promise<Predictio
                 if (isRecalculateAction) createdHistoryCount++;
                 else createdFutureCount++;
               } else {
-                await tx.prediction.update({
-                  where: { matchId: item.matchedMatch.id },
-                  data: {
-                    predictedHomeScore: home,
-                    predictedAwayScore: away,
-                  }
-                });
+                if (existingPred) {
+                  await tx.prediction.update({
+                    where: { id: existingPred.id },
+                    data: {
+                      predictedHomeScore: home,
+                      predictedAwayScore: away,
+                    }
+                  });
+                }
                 if (isRecalculateAction) updatedHistoryCount++;
                 else updatedFutureCount++;
               }
@@ -1136,19 +1150,29 @@ export async function confirmPredictionImport(buffer: Buffer): Promise<Predictio
 
                 const scoreResult = calculateMatchScore(predInput, matchInput);
 
-                await tx.score.upsert({
-                  where: { matchId: dbMatch.id },
-                  update: {
-                    points: scoreResult.points,
-                    reason: scoreResult.reason,
-                    calculatedAt: new Date(),
-                  },
-                  create: {
-                    matchId: dbMatch.id,
-                    points: scoreResult.points,
-                    reason: scoreResult.reason,
-                  }
+                const existingScore = await tx.score.findFirst({
+                  where: { matchId: dbMatch.id, userId }
                 });
+
+                if (existingScore) {
+                  await tx.score.update({
+                    where: { id: existingScore.id },
+                    data: {
+                      points: scoreResult.points,
+                      reason: scoreResult.reason,
+                      calculatedAt: new Date(),
+                    }
+                  });
+                } else {
+                  await tx.score.create({
+                    data: {
+                      matchId: dbMatch.id,
+                      userId,
+                      points: scoreResult.points,
+                      reason: scoreResult.reason,
+                    }
+                  });
+                }
 
                 recalculatedCount++;
               }

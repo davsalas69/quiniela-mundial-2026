@@ -2,7 +2,7 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
 }
 
 generator client {
@@ -27,13 +27,45 @@ model Match {
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
   
-  prediction          Prediction?
-  score               Score?
+  predictions         Prediction[]
+  scores              Score[]
+}
+
+model User {
+  id                 String       @id @default(uuid())
+  username           String
+  normalizedUsername String       @unique
+  passwordHash       String
+  role               String       @default("USER") // ADMIN or USER
+  isActive           Boolean      @default(true)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  predictions        Prediction[]
+  scores             Score[]
+  sessions           Session[]
+}
+
+model Session {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+}
+
+model AuthAttempt {
+  id          String   @id @default(uuid())
+  ipHash      String
+  username    String?  // normalizado
+  count       Int      @default(1)
+  lastAttempt DateTime @default(now())
 }
 
 model Prediction {
   id                     String   @id @default(uuid())
-  matchId                String   @unique
+  matchId                String
   match                  Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
   predictedHomeScore     Int?
   predictedAwayScore     Int?
@@ -42,15 +74,21 @@ model Prediction {
   predictedWinner        String?  // Name of the predicted winner (for final stage draws)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
+
+  userId                 String?
+  user                   User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Score {
   id           String   @id @default(uuid())
-  matchId      String   @unique
+  matchId      String
   match        Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
   points       Int
   reason       String
   calculatedAt DateTime @default(now())
+
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model SyncLog {
@@ -66,4 +104,3 @@ model SyncLog {
   errorCount   Int       @default(0)
   message      String?
 }
-

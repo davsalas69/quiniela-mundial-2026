@@ -1,6 +1,8 @@
-import { prisma } from '@/lib/db';
 import { Match, Prediction, Score } from '@prisma/client';
 import ScoresClient from './ScoresClient';
+import { getMatchesWithData } from '@/app/actions';
+import { getCurrentUser } from '@/lib/auth';
+import { redirect } from 'next/navigation';
 
 export const revalidate = 0; // Disable cache for fresh DB reads
 
@@ -10,15 +12,12 @@ export type MatchWithData = Match & {
 };
 
 export default async function ScoresPage() {
-  const matches: MatchWithData[] = await prisma.match.findMany({
-    include: {
-      prediction: true,
-      score: true,
-    },
-    orderBy: [
-      { kickoffAt: 'asc' },
-    ],
-  });
+  const user = await getCurrentUser();
+  if (!user) {
+    redirect('/login');
+  }
+
+  const matches: MatchWithData[] = await getMatchesWithData();
 
   return (
     <div className="space-y-6">

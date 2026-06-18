@@ -9,7 +9,7 @@
     "lint": "eslint",
     "db:sqlite": "node prisma/switch-db.js sqlite",
     "db:postgresql": "node prisma/switch-db.js postgresql",
-    "test": "vitest run"
+    "test": "vitest run --no-file-parallelism"
   },
   "dependencies": {
     "@libsql/client": "^0.17.3",

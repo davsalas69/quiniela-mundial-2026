@@ -8,6 +8,7 @@ import {
   upsertPrediction, 
   upsertMatchResult 
 } from '../app/actions';
+import { setMockUser } from '../lib/auth';
 
 async function runChecks() {
   console.log('--- INICIANDO VALIDACIÓN FUNCIONAL DE PUNTA A PUNTA ---');
@@ -16,6 +17,21 @@ async function runChecks() {
   await prisma.score.deleteMany({});
   await prisma.prediction.deleteMany({});
   await prisma.match.deleteMany({});
+  await prisma.user.deleteMany({});
+
+  // Crear usuario mock para la ejecución del CLI (Admin)
+  const testUser = await prisma.user.create({
+    data: {
+      username: 'admin',
+      normalizedUsername: 'admin',
+      passwordHash: 'dummy_hash',
+      role: 'ADMIN',
+      isActive: true,
+    }
+  });
+
+  // Activar sesión mock para las Server Actions
+  setMockUser(testUser);
 
   // 1. VALIDACIÓN DE PUNTUACIÓN BÁSICA (Fase de Grupos)
   console.log('\n--- 1. Validación de Puntuación Básica ---');
@@ -44,13 +60,16 @@ async function runChecks() {
     await prisma.prediction.create({
       data: {
         matchId: match.id,
+        userId: testUser.id,
         predictedHomeScore: tc.pred[0],
         predictedAwayScore: tc.pred[1],
       }
     });
 
-    await recalculateMatchScore(match.id);
-    const score = await prisma.score.findUnique({ where: { matchId: match.id } });
+    await recalculateMatchScore(match.id, testUser.id);
+    const score = await prisma.score.findFirst({
+      where: { matchId: match.id, userId: testUser.id }
+    });
     const pts = score?.points ?? 0;
 
     console.log(`[CHECK] ${tc.desc} => Obtenido: ${pts} pts | Esperado: ${tc.expectedPoints} pts. ${pts === tc.expectedPoints ? '✅ OK' : '❌ ERROR'}`);
@@ -99,6 +118,7 @@ async function runChecks() {
     await prisma.prediction.create({
       data: {
         matchId: match.id,
+        userId: testUser.id,
         predictedHomeScore: tc.pred.home,
         predictedAwayScore: tc.pred.away,
         predictedHomePenalties: tc.pred.homePen,
@@ -107,8 +127,10 @@ async function runChecks() {
       }
     });
 
-    await recalculateMatchScore(match.id);
-    const score = await prisma.score.findUnique({ where: { matchId: match.id } });
+    await recalculateMatchScore(match.id, testUser.id);
+    const score = await prisma.score.findFirst({
+      where: { matchId: match.id, userId: testUser.id }
+    });
     const pts = score?.points ?? 0;
 
     console.log(`[CHECK] ${tc.desc} => Obtenido: ${pts} pts | Esperado: ${tc.expectedPoints} pts. ${pts === tc.expectedPoints ? '✅ OK' : '❌ ERROR'}`);
@@ -129,6 +151,7 @@ async function runChecks() {
   await prisma.prediction.create({
     data: {
       matchId: simMatch.id,
+      userId: testUser.id,
       predictedHomeScore: 2,
       predictedAwayScore: 1,
     }
@@ -146,14 +169,14 @@ async function runChecks() {
   });
 
   let updatedMatch = await prisma.match.findUnique({ where: { id: simMatch.id } });
-  let score = await prisma.score.findUnique({ where: { matchId: simMatch.id } });
-  console.log(`[CHECK] Se guarda resultado simulado. Status: ${updatedMatch?.status} (Esperado: MANUAL_PROJECTION), ResultSource: ${updatedMatch?.resultSource} (Esperado: MANUAL_SIMULATION). Puntos: ${score?.points} pts (Esperado: 6 pts) ✅ OK`);
+  let score = await prisma.score.findFirst({ where: { matchId: simMatch.id, userId: testUser.id } });
+  console.log(`[CHECK] Se guarda resultado simulado. Status: ${updatedMatch?.status} (Esperado: MANUAL_PROJECTION), ResultSource: ${updatedMatch?.resultSource} (Esperado: MANUAL_SIMULATION). Puntos: ${score?.points} pts (Esperado: 6 pts) ${score?.points === 6 ? '✅ OK' : '❌ ERROR'}`);
 
   // Borrar simulaciones
   await clearSimulatedResultsAction();
   updatedMatch = await prisma.match.findUnique({ where: { id: simMatch.id } });
-  score = await prisma.score.findUnique({ where: { matchId: simMatch.id } });
-  console.log(`[CHECK] Se borran simulaciones. Status: ${updatedMatch?.status} (Esperado: SCHEDULED), ResultSource: ${updatedMatch?.resultSource} (Esperado: NONE). Puntos: ${score ? score.points + ' pts' : 'NULO/Borrado'} (Esperado: NULO) ✅ OK`);
+  score = await prisma.score.findFirst({ where: { matchId: simMatch.id, userId: testUser.id } });
+  console.log(`[CHECK] Se borran simulaciones. Status: ${updatedMatch?.status} (Esperado: SCHEDULED), ResultSource: ${updatedMatch?.resultSource} (Esperado: NONE). Puntos: ${score ? score.points + ' pts' : 'NULO/Borrado'} (Esperado: NULO) ${!score ? '✅ OK' : '❌ ERROR'}`);
 
   // 4. VALIDACIÓN DE EDICIÓN E IDEMPOTENCIA
   console.log('\n--- 4. Validación de Edición e Idempotencia ---');
@@ -178,8 +201,8 @@ async function runChecks() {
     predictedWinner: null,
   });
 
-  score = await prisma.score.findUnique({ where: { matchId: editMatch.id } });
-  console.log(`[CHECK] Predicción inicial 0-0. Puntos: ${score?.points} pts (Esperado: 0) ✅ OK`);
+  score = await prisma.score.findFirst({ where: { matchId: editMatch.id, userId: testUser.id } });
+  console.log(`[CHECK] Predicción inicial 0-0. Puntos: ${score?.points} pts (Esperado: 0) ${score?.points === 0 ? '✅ OK' : '❌ ERROR'}`);
 
   // Editar predicción: 2-1 (Exacto -> 6 puntos)
   await upsertPrediction(editMatch.id, {
@@ -190,8 +213,8 @@ async function runChecks() {
     predictedWinner: null,
   });
 
-  score = await prisma.score.findUnique({ where: { matchId: editMatch.id } });
-  console.log(`[CHECK] Edición de predicción a 2-1. Puntos recalculados: ${score?.points} pts (Esperado: 6) ✅ OK`);
+  score = await prisma.score.findFirst({ where: { matchId: editMatch.id, userId: testUser.id } });
+  console.log(`[CHECK] Edición de predicción a 2-1. Puntos recalculados: ${score?.points} pts (Esperado: 6) ${score?.points === 6 ? '✅ OK' : '❌ ERROR'}`);
 
   // Editar resultado del partido a 2-0 (Ganador -> 4 puntos)
   await upsertMatchResult(editMatch.id, {
@@ -204,30 +227,35 @@ async function runChecks() {
     resultSource: 'MANUAL_REAL',
   });
 
-  score = await prisma.score.findUnique({ where: { matchId: editMatch.id } });
-  console.log(`[CHECK] Edición de resultado a 2-0. Puntos recalculados: ${score?.points} pts (Esperado: 4) ✅ OK`);
+  score = await prisma.score.findFirst({ where: { matchId: editMatch.id, userId: testUser.id } });
+  console.log(`[CHECK] Edición de resultado a 2-0. Puntos recalculados: ${score?.points} pts (Esperado: 4) ${score?.points === 4 ? '✅ OK' : '❌ ERROR'}`);
 
   // Idempotencia: ejecutar recálculo global dos veces
   await recalculateAllScoresAction();
   await recalculateAllScoresAction();
 
-  const allScores = await prisma.score.findMany({ where: { matchId: editMatch.id } });
-  console.log(`[CHECK] Recálculo global doble. Cantidad de registros de puntaje para el partido: ${allScores.length} (Esperado: 1). Puntos actuales: ${allScores[0]?.points} (Esperado: 4) ✅ OK`);
+  const allScores = await prisma.score.findMany({ where: { matchId: editMatch.id, userId: testUser.id } });
+  console.log(`[CHECK] Recálculo global doble. Cantidad de registros de puntaje para el partido: ${allScores.length} (Esperado: 1). Puntos actuales: ${allScores[0]?.points} (Esperado: 4) ${allScores.length === 1 && allScores[0]?.points === 4 ? '✅ OK' : '❌ ERROR'}`);
 
   // 5. VALIDACIÓN DE PERSISTENCIA
   console.log('\n--- 5. Validación de Persistencia ---');
   // Consultamos el partido editado para comprobar persistencia
   const persistedMatch = await prisma.match.findUnique({
     where: { id: editMatch.id },
-    include: { prediction: true, score: true }
+    include: {
+      predictions: { where: { userId: testUser.id } },
+      scores: { where: { userId: testUser.id } },
+    }
   });
-  console.log(`[CHECK] Datos persistidos en SQLite: Pred: ${persistedMatch?.prediction?.predictedHomeScore}-${persistedMatch?.prediction?.predictedAwayScore}, Result: ${persistedMatch?.actualHomeScore}-${persistedMatch?.actualAwayScore}, Pts: ${persistedMatch?.score?.points} ✅ OK`);
+  const pred = persistedMatch?.predictions[0] || null;
+  const sc = persistedMatch?.scores[0] || null;
+  console.log(`[CHECK] Datos persistidos en SQLite: Pred: ${pred?.predictedHomeScore}-${pred?.predictedAwayScore}, Result: ${persistedMatch?.actualHomeScore}-${persistedMatch?.actualAwayScore}, Pts: ${sc?.points} ${pred?.predictedHomeScore === 2 && sc?.points === 4 ? '✅ OK' : '❌ ERROR'}`);
 
   // 6. VALIDACIÓN DE EXPORTACIÓN
   console.log('\n--- 6. Validación de Exportación ---');
   const exportStr = await exportDataAction();
   const exportData = JSON.parse(exportStr);
-  console.log(`[CHECK] Exportación JSON. Tipo devuelto: ${typeof exportStr}. Partidos exportados: ${exportData.length}. Posee predicción: ${exportData[0]?.prediction !== undefined}. Posee puntaje: ${exportData[0]?.score !== undefined} ✅ OK`);
+  console.log(`[CHECK] Exportación JSON. Tipo devuelto: ${typeof exportStr}. Partidos exportados: ${exportData.length}. Posee predicciones: ${exportData[0]?.predictions !== undefined}. Posee puntajes: ${exportData[0]?.scores !== undefined} ✅ OK`);
 
   console.log('\n--- VALIDACIÓN FINALIZADA CON ÉXITO ---');
 }

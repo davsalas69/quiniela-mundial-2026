@@ -1,10 +1,22 @@
 import { prisma } from '@/lib/db';
 import { Match } from '@prisma/client';
 import SettingsClient from './SettingsClient';
+import { requireAdmin } from '@/lib/auth';
+import { redirect } from 'next/navigation';
 
 export const dynamic = 'force-dynamic'; // Disable cache for fresh DB reads
 
 export default async function SettingsPage() {
+  try {
+    await requireAdmin();
+  } catch (error: any) {
+    if (error.message === 'FORBIDDEN') {
+      redirect('/');
+    } else {
+      redirect('/login');
+    }
+  }
+
   const matches: Match[] = await prisma.match.findMany({
     orderBy: [
       { kickoffAt: 'asc' },

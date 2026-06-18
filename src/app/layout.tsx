@@ -3,13 +3,15 @@ import { Outfit } from 'next/font/google';
 import './globals.css';
 import { prisma } from '@/lib/db';
 import Link from 'next/link';
-import { 
-  Trophy, 
-  LayoutDashboard, 
-  PenTool, 
-  CheckSquare, 
-  Award, 
-  Settings 
+import { getCurrentUser } from '@/lib/auth';
+import { logoutAction } from './actions';
+import {
+  Trophy,
+  LayoutDashboard,
+  PenTool,
+  CheckSquare,
+  Award,
+  Settings
 } from 'lucide-react';
 
 const outfit = Outfit({
@@ -28,7 +30,21 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Obtener estadísticas en tiempo real para la barra lateral
+  // 1. Obtener el usuario actual
+  const user = await getCurrentUser();
+
+  // Si no hay usuario en sesión, renderizamos un layout limpio sin barra lateral
+  if (!user) {
+    return (
+      <html lang="es" className={`${outfit.variable} h-full antialiased dark`}>
+        <body className="min-h-full bg-[#07070b] text-[#f4f4f5] flex items-center justify-center">
+          {children}
+        </body>
+      </html>
+    );
+  }
+
+  // 2. Obtener estadísticas en tiempo real para el usuario actual
   let totalPoints = 0;
   let totalPredictions = 0;
   let totalMatches = 0;
@@ -36,13 +52,16 @@ export default async function RootLayout({
 
   try {
     const totalPointsAgg = await prisma.score.aggregate({
+      where: { userId: user.id },
       _sum: {
         points: true
       }
     });
     totalPoints = totalPointsAgg._sum.points ?? 0;
 
-    totalPredictions = await prisma.prediction.count();
+    totalPredictions = await prisma.prediction.count({
+      where: { userId: user.id }
+    });
     totalMatches = await prisma.match.count();
     finishedMatches = await prisma.match.count({
       where: {
@@ -55,17 +74,23 @@ export default async function RootLayout({
     console.warn("Failed to fetch sidebar stats from database:", error instanceof Error ? error.message : String(error));
   }
 
+  // 3. Filtrar enlaces de navegación según rol
   const navItems = [
     { href: '/', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/predictions', label: 'Predicciones', icon: PenTool },
-    { href: '/results', label: 'Resultados', icon: CheckSquare },
     { href: '/scores', label: 'Mis Puntos', icon: Award },
-    { href: '/settings', label: 'Configuración', icon: Settings },
   ];
+
+  if (user.role === 'ADMIN') {
+    navItems.push(
+      { href: '/results', label: 'Resultados', icon: CheckSquare },
+      { href: '/settings', label: 'Configuración', icon: Settings }
+    );
+  }
 
   return (
     <html lang="es" className={`${outfit.variable} h-full antialiased dark`}>
-      <body className="min-h-full bg-[#07070b] text-[#f4f4f5] flex flex-col md:flex-row">
+      <body className="min-h-full bg-[#07070b] text-[#f4f4f5] flex flex-col md:flex-row w-full">
         {/* Sidebar */}
         <aside className="w-full md:w-64 bg-[#0f0f15]/80 backdrop-blur-md border-b md:border-b-0 md:border-r border-[#1e1e24] flex flex-col justify-between shrink-0">
           <div>
@@ -123,11 +148,34 @@ export default async function RootLayout({
             </nav>
           </div>
 
-          {/* Footer metadata */}
-          <div className="p-4 border-t border-[#1e1e24] text-center">
-            <span className="text-[10px] text-zinc-600 font-medium">
-              Quiniela Mundial 2026 © V1.0.0
-            </span>
+          {/* User Info & Logout Button */}
+          <div className="p-4 border-t border-[#1e1e24] space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-white truncate">@{user.username}</p>
+                <span className={`inline-block text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded ${
+                  user.role === 'ADMIN'
+                    ? 'bg-[#6d28d9]/20 text-[#a78bfa] border border-[#6d28d9]/40'
+                    : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+                }`}>
+                  {user.role}
+                </span>
+              </div>
+              <form action={logoutAction}>
+                <button
+                  type="submit"
+                  className="p-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-lg transition-all duration-200 cursor-pointer"
+                  title="Cerrar Sesión"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                </button>
+              </form>
+            </div>
+            <div className="text-center">
+              <span className="text-[10px] text-zinc-600 font-medium block">
+                Quiniela Mundial 2026 © V1.0.0
+              </span>
+            </div>
           </div>
         </aside>
 

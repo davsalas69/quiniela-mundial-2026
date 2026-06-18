@@ -1,6 +1,8 @@
-import { prisma } from '@/lib/db';
 import { Match, Prediction, Score } from '@prisma/client';
 import Link from 'next/link';
+import { getMatchesWithData } from '@/app/actions';
+import { getCurrentUser } from '@/lib/auth';
+import { redirect } from 'next/navigation';
 import { 
   Award, 
   CheckCircle, 
@@ -20,15 +22,12 @@ export type MatchWithData = Match & {
 };
 
 export default async function DashboardPage() {
-  const matches: MatchWithData[] = await prisma.match.findMany({
-    include: {
-      prediction: true,
-      score: true,
-    },
-    orderBy: [
-      { kickoffAt: 'asc' },
-    ],
-  });
+  const user = await getCurrentUser();
+  if (!user) {
+    redirect('/login');
+  }
+
+  const matches: MatchWithData[] = await getMatchesWithData();
 
   const totalMatches = matches.length;
   const predictedMatches = matches.filter((m: MatchWithData) => m.prediction !== null);

@@ -5,69 +5,378 @@
 import { prisma } from '@/lib/db';
 import { calculateMatchScore } from '@/lib/scoring';
 import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
 import { syncTournament } from '@/lib/sync-service';
 import { compareDatabaseWithExcel, importExcelBackup, previewPredictionImport, confirmPredictionImport } from '@/lib/excel-parser';
+import {
+  hashPassword,
+  verifyPassword,
+  createSession,
+  destroySession,
+  getCurrentUser,
+  requireUser,
+  requireAdmin
+} from '@/lib/auth';
+import { checkRateLimit, resetRateLimit } from '@/lib/rate-limit';
+import { headers } from 'next/headers';
 
+// Auxiliar para revalidar caché en Next.js
 function safeRevalidatePath(path: string) {
   try {
     revalidatePath(path);
   } catch (error) {
-    // Silently ignore when called outside of Next.js server context (e.g. CLI tests)
+    // Ignorar fuera del contexto del servidor de Next.js (ej: en tests CLI)
   }
 }
 
+// Auxiliar para obtener la IP del cliente
+async function getClientIp() {
+  try {
+    const headerList = await headers();
+    const forwardedFor = headerList.get('x-forwarded-for');
+    if (forwardedFor) {
+      return forwardedFor.split(',')[0].trim();
+    }
+  } catch (e) {
+    // Ignorar si se ejecuta fuera de contexto HTTP (ej: en tests)
+  }
+  return '127.0.0.1';
+}
 
-// Helper: Recalcular e insertar puntaje para un partido individual
-export async function recalculateMatchScore(matchId: string) {
+// --- ACCIONES DE AUTENTICACIÓN ---
+
+/**
+ * Setup inicial del usuario admin. Solo permitido si no existe ningún usuario.
+ */
+export async function setupAdminAction(formData: FormData) {
+  const ip = await getClientIp();
+
+  // Rate Limiting por IP para setup
+  const rateLimitResult = await checkRateLimit(ip, 'admin');
+  if (!rateLimitResult.allowed) {
+    return {
+      success: false,
+      message: `Demasiados intentos. Por favor, intenta de nuevo en ${rateLimitResult.retryAfterSeconds} segundos.`
+    };
+  }
+
+  const password = formData.get('password') as string;
+  const confirmPassword = formData.get('confirmPassword') as string;
+
+  if (!password || !confirmPassword) {
+    return { success: false, message: 'La contraseña y su confirmación son obligatorias.' };
+  }
+
+  if (password.length < 8) {
+    return { success: false, message: 'La contraseña debe tener al menos 8 caracteres.' };
+  }
+
+  if (password !== confirmPassword) {
+    return { success: false, message: 'Las contraseñas no coinciden.' };
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Comprobar que no existe ningún usuario
+      const userCount = await tx.user.count();
+      if (userCount > 0) {
+        throw new Error('SETUP_BLOCKED');
+      }
+
+      // 2. Crear usuario admin
+      const adminUser = await tx.user.create({
+        data: {
+          username: 'admin',
+          normalizedUsername: 'admin',
+          role: 'ADMIN',
+          isActive: true,
+          passwordHash: hashPassword(password),
+        },
+      });
+
+      // 3. Asignar predicciones existentes sin propietario (userId === null) al admin
+      const predictions = await tx.prediction.findMany({
+        where: { userId: null },
+      });
+
+      for (const pred of predictions) {
+        await tx.prediction.update({
+          where: { id: pred.id },
+          data: { userId: adminUser.id },
+        });
+      }
+
+      // 4. Eliminar scores antiguos sin propietario y recalcularlos bajo el admin
+      await tx.score.deleteMany({
+        where: { userId: null },
+      });
+
+      const dbMatches = await tx.match.findMany({
+        where: {
+          status: { in: ['FINISHED', 'MANUAL_PROJECTION'] },
+          actualHomeScore: { not: null },
+          actualAwayScore: { not: null },
+        },
+      });
+
+      for (const match of dbMatches) {
+        const adminPred = predictions.find(p => p.matchId === match.id);
+        if (adminPred) {
+          const scoreResult = calculateMatchScore(adminPred, match);
+          await tx.score.create({
+            data: {
+              matchId: match.id,
+              userId: adminUser.id,
+              points: scoreResult.points,
+              reason: scoreResult.reason,
+            },
+          });
+        }
+      }
+
+      // 5. Confirmar que no quedan registros Prediction/Score sin userId
+      const remainingPreds = await tx.prediction.count({ where: { userId: null } });
+      const remainingScores = await tx.score.count({ where: { userId: null } });
+      if (remainingPreds > 0 || remainingScores > 0) {
+        throw new Error('Fase A falló: Aún existen predicciones o puntajes sin propietario.');
+      }
+
+      return adminUser;
+    });
+
+    // 6. Crear la primera sesión y cookie
+    await createSession(result.id);
+    await resetRateLimit(ip, 'admin');
+
+    safeRevalidatePath('/');
+    return { success: true };
+  } catch (error: any) {
+    if (error.message === 'SETUP_BLOCKED') {
+      return { success: false, message: 'El setup de administrador ya ha sido completado.' };
+    }
+    console.error('Setup error (safe log):', error.message || error);
+    return { success: false, message: 'Error interno en la configuración inicial.' };
+  }
+}
+
+/**
+ * Inicio de sesión de usuarios.
+ */
+export async function loginAction(formData: FormData) {
+  const ip = await getClientIp();
+  const username = (formData.get('username') as string || '').trim();
+  const password = formData.get('password') as string;
+
+  if (!username || !password) {
+    return { success: false, message: 'El usuario y la contraseña son requeridos.' };
+  }
+
+  const normalizedUsername = username.toLowerCase();
+
+  // Rate Limiting
+  const rateLimitResult = await checkRateLimit(ip, normalizedUsername);
+  if (!rateLimitResult.allowed) {
+    return {
+      success: false,
+      message: `Demasiados intentos. Por favor, reintente en ${rateLimitResult.retryAfterSeconds} segundos.`
+    };
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { normalizedUsername },
+    });
+
+    if (!user || !verifyPassword(password, user.passwordHash) || !user.isActive) {
+      return { success: false, message: 'Credenciales inválidas.' };
+    }
+
+    await createSession(user.id);
+    await resetRateLimit(ip, normalizedUsername);
+
+    safeRevalidatePath('/');
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: 'Error interno de inicio de sesión.' };
+  }
+}
+
+/**
+ * Registro de usuarios estándar (siempre USER).
+ */
+export async function registerAction(formData: FormData) {
+  const ip = await getClientIp();
+  const username = (formData.get('username') as string || '').trim();
+  const password = formData.get('password') as string;
+  const confirmPassword = formData.get('confirmPassword') as string;
+
+  if (!username || !password || !confirmPassword) {
+    return { success: false, message: 'Todos los campos son obligatorios.' };
+  }
+
+  const normalizedUsername = username.toLowerCase();
+
+  // Rate Limiting
+  const rateLimitResult = await checkRateLimit(ip, normalizedUsername);
+  if (!rateLimitResult.allowed) {
+    return {
+      success: false,
+      message: `Demasiados intentos. Por favor, reintente en ${rateLimitResult.retryAfterSeconds} segundos.`
+    };
+  }
+
+  // Validación formato del nombre de usuario
+  const usernameRegex = /^[a-zA-Z0-9_]{3,30}$/;
+  if (!usernameRegex.test(username)) {
+    return { success: false, message: 'El nombre de usuario debe tener de 3 a 30 caracteres alfanuméricos o guión bajo.' };
+  }
+
+  // Comprobar nombres reservados (ej. admin y sus variantes)
+  const reserved = ['admin', 'administrator', 'root', 'setup', 'login', 'register'];
+  if (reserved.includes(normalizedUsername)) {
+    return { success: false, message: 'Este nombre de usuario no está disponible.' };
+  }
+
+  if (password.length < 8) {
+    return { success: false, message: 'La contraseña debe tener al menos 8 caracteres.' };
+  }
+
+  if (password !== confirmPassword) {
+    return { success: false, message: 'Las contraseñas no coinciden.' };
+  }
+
+  try {
+    // Comprobar si ya existe el usuario
+    const existing = await prisma.user.findUnique({
+      where: { normalizedUsername },
+    });
+
+    if (existing) {
+      return { success: false, message: 'El usuario ya existe.' };
+    }
+
+    const created = await prisma.user.create({
+      data: {
+        username,
+        normalizedUsername,
+        passwordHash: hashPassword(password),
+        role: 'USER',
+        isActive: true,
+      },
+    });
+
+    await createSession(created.id);
+    await resetRateLimit(ip, normalizedUsername);
+
+    safeRevalidatePath('/');
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: 'Error interno al registrar el usuario.' };
+  }
+}
+
+/**
+ * Cierre de sesión.
+ */
+export async function logoutAction() {
+  await destroySession();
+  safeRevalidatePath('/');
+  redirect('/login');
+}
+
+// --- ACCIONES DE PARTIDOS, PREDICCIONES Y PUNTOS ---
+
+/**
+ * Recalcula e inserta puntaje para un partido individual.
+ * Si se especifica userId, solo lo hace para ese usuario; de lo contrario, para todos.
+ */
+export async function recalculateMatchScore(matchId: string, userId?: string) {
   const match = await prisma.match.findUnique({
     where: { id: matchId },
-    include: { prediction: true },
+    include: {
+      predictions: userId ? { where: { userId } } : true,
+    },
   });
 
   if (!match) return;
 
   if (match.actualHomeScore === null || match.actualAwayScore === null) {
-    // Si no hay resultado, borramos el puntaje si existe
+    // Si no hay resultado, borramos el puntaje
     await prisma.score.deleteMany({
-      where: { matchId },
+      where: {
+        matchId,
+        ...(userId ? { userId } : {}),
+      },
     });
     return;
   }
 
-  // Calcular puntaje
-  const scoreResult = calculateMatchScore(match.prediction, match);
+  // Recalcular para cada predicción encontrada
+  for (const pred of match.predictions) {
+    if (!pred.userId) continue;
 
-  // Guardar idempotentemente
-  await prisma.score.upsert({
-    where: { matchId },
-    update: {
-      points: scoreResult.points,
-      reason: scoreResult.reason,
-      calculatedAt: new Date(),
-    },
-    create: {
-      matchId,
-      points: scoreResult.points,
-      reason: scoreResult.reason,
-    },
-  });
+    const scoreResult = calculateMatchScore(pred, match);
+
+    // Guardar de forma idempotente en Fase A (sin @@unique compuesto en DB)
+    const existingScore = await prisma.score.findFirst({
+      where: { matchId, userId: pred.userId },
+    });
+
+    if (existingScore) {
+      await prisma.score.update({
+        where: { id: existingScore.id },
+        data: {
+          points: scoreResult.points,
+          reason: scoreResult.reason,
+          calculatedAt: new Date(),
+        },
+      });
+    } else {
+      await prisma.score.create({
+        data: {
+          matchId,
+          userId: pred.userId,
+          points: scoreResult.points,
+          reason: scoreResult.reason,
+        },
+      });
+    }
+  }
 }
 
-// 1. Listar partidos completos con predicción y puntaje
+/**
+ * Listar partidos completos con predicción y puntaje para el usuario actual.
+ */
 export async function getMatchesWithData() {
-  return await prisma.match.findMany({
+  const user = await requireUser();
+  const userId = user.id;
+
+  const matches = await prisma.match.findMany({
     include: {
-      prediction: true,
-      score: true,
+      predictions: {
+        where: { userId },
+      },
+      scores: {
+        where: { userId },
+      },
     },
     orderBy: [
       { kickoffAt: 'asc' },
       { createdAt: 'asc' },
     ],
   });
+
+  // Mapear arrays de uno-a-muchos a propiedades individuales para mantener compatibilidad
+  return matches.map(m => ({
+    ...m,
+    prediction: m.predictions[0] || null,
+    score: m.scores[0] || null,
+  }));
 }
 
-// 2. Guardar o actualizar una predicción
+/**
+ * Guardar o actualizar una predicción (Requiere login, id viene de sesión).
+ */
 export async function upsertPrediction(
   matchId: string,
   data: {
@@ -78,65 +387,95 @@ export async function upsertPrediction(
     predictedWinner: string | null;
   }
 ) {
-  // Verificar si la predicción está completamente vacía para decidir si guardamos o eliminamos
+  const user = await requireUser();
+  const userId = user.id;
+
   const isEmpty = data.predictedHomeScore === null && data.predictedAwayScore === null;
 
   await prisma.$transaction(async (tx) => {
     if (isEmpty) {
       await tx.prediction.deleteMany({
-        where: { matchId },
+        where: { matchId, userId },
+      });
+      await tx.score.deleteMany({
+        where: { matchId, userId },
       });
     } else {
-      await tx.prediction.upsert({
-        where: { matchId },
-        update: {
-          predictedHomeScore: data.predictedHomeScore,
-          predictedAwayScore: data.predictedAwayScore,
-          predictedHomePenalties: data.predictedHomePenalties,
-          predictedAwayPenalties: data.predictedAwayPenalties,
-          predictedWinner: data.predictedWinner,
-        },
-        create: {
-          matchId,
-          predictedHomeScore: data.predictedHomeScore,
-          predictedAwayScore: data.predictedAwayScore,
-          predictedHomePenalties: data.predictedHomePenalties,
-          predictedAwayPenalties: data.predictedAwayPenalties,
-          predictedWinner: data.predictedWinner,
-        },
+      const existingPred = await tx.prediction.findFirst({
+        where: { matchId, userId },
       });
-    }
 
-    // Recalcular e insertar puntaje para el partido de forma atómica
-    const match = await tx.match.findUnique({
-      where: { id: matchId },
-      include: { prediction: true },
-    });
-
-    if (match) {
-      if (match.actualHomeScore === null || match.actualAwayScore === null) {
-        // Si no hay resultado, borramos el puntaje si existe
-        await tx.score.deleteMany({
-          where: { matchId },
+      let predId: string;
+      if (existingPred) {
+        predId = existingPred.id;
+        await tx.prediction.update({
+          where: { id: predId },
+          data: {
+            predictedHomeScore: data.predictedHomeScore,
+            predictedAwayScore: data.predictedAwayScore,
+            predictedHomePenalties: data.predictedHomePenalties,
+            predictedAwayPenalties: data.predictedAwayPenalties,
+            predictedWinner: data.predictedWinner,
+          },
         });
       } else {
-        // Calcular puntaje
-        const scoreResult = calculateMatchScore(match.prediction, match);
-
-        // Guardar de forma idempotente
-        await tx.score.upsert({
-          where: { matchId },
-          update: {
-            points: scoreResult.points,
-            reason: scoreResult.reason,
-            calculatedAt: new Date(),
-          },
-          create: {
+        const createdPred = await tx.prediction.create({
+          data: {
             matchId,
-            points: scoreResult.points,
-            reason: scoreResult.reason,
+            userId,
+            predictedHomeScore: data.predictedHomeScore,
+            predictedAwayScore: data.predictedAwayScore,
+            predictedHomePenalties: data.predictedHomePenalties,
+            predictedAwayPenalties: data.predictedAwayPenalties,
+            predictedWinner: data.predictedWinner,
           },
         });
+        predId = createdPred.id;
+      }
+
+      // Recalcular e insertar puntaje para el partido de forma atómica para este usuario
+      const match = await tx.match.findUnique({
+        where: { id: matchId },
+      });
+
+      if (match) {
+        if (match.actualHomeScore === null || match.actualAwayScore === null) {
+          await tx.score.deleteMany({
+            where: { matchId, userId },
+          });
+        } else {
+          const updatedPred = await tx.prediction.findUnique({
+            where: { id: predId },
+          });
+
+          if (updatedPred) {
+            const scoreResult = calculateMatchScore(updatedPred, match);
+
+            const existingScore = await tx.score.findFirst({
+              where: { matchId, userId },
+            });
+
+            if (existingScore) {
+              await tx.score.update({
+                where: { id: existingScore.id },
+                data: {
+                  points: scoreResult.points,
+                  reason: scoreResult.reason,
+                  calculatedAt: new Date(),
+                },
+              });
+            } else {
+              await tx.score.create({
+                data: {
+                  matchId,
+                  userId,
+                  points: scoreResult.points,
+                  reason: scoreResult.reason,
+                },
+              });
+            }
+          }
+        }
       }
     }
   });
@@ -147,8 +486,9 @@ export async function upsertPrediction(
   safeRevalidatePath('/scores');
 }
 
-
-// 3. Guardar o actualizar el resultado de un partido
+/**
+ * Guardar o actualizar el resultado de un partido (Requiere Admin).
+ */
 export async function upsertMatchResult(
   matchId: string,
   data: {
@@ -157,10 +497,12 @@ export async function upsertMatchResult(
     actualHomePenalties: number | null;
     actualAwayPenalties: number | null;
     actualWinner: string | null;
-    status: string; // SCHEDULED, IN_PROGRESS, FINISHED, MANUAL_PROJECTION
-    resultSource: string; // NONE, API, MANUAL_REAL, MANUAL_SIMULATION
+    status: string;
+    resultSource: string;
   }
 ) {
+  await requireAdmin();
+
   await prisma.match.update({
     where: { id: matchId },
     data: {
@@ -174,7 +516,7 @@ export async function upsertMatchResult(
     },
   });
 
-  // Recalcular puntaje inmediatamente
+  // Recalcular puntajes de TODOS los usuarios para este partido
   await recalculateMatchScore(matchId);
 
   safeRevalidatePath('/');
@@ -183,10 +525,14 @@ export async function upsertMatchResult(
   safeRevalidatePath('/scores');
 }
 
-// 4. Acción global: Recalcular todos los puntos
+/**
+ * Acción global: Recalcular todos los puntos de todos los usuarios (Requiere Admin).
+ */
 export async function recalculateAllScoresAction() {
+  await requireAdmin();
+
   const matches = await prisma.match.findMany({
-    include: { prediction: true },
+    include: { predictions: true },
   });
 
   for (const match of matches) {
@@ -195,20 +541,35 @@ export async function recalculateAllScoresAction() {
         where: { matchId: match.id },
       });
     } else {
-      const scoreResult = calculateMatchScore(match.prediction, match);
-      await prisma.score.upsert({
-        where: { matchId: match.id },
-        update: {
-          points: scoreResult.points,
-          reason: scoreResult.reason,
-          calculatedAt: new Date(),
-        },
-        create: {
-          matchId: match.id,
-          points: scoreResult.points,
-          reason: scoreResult.reason,
-        },
-      });
+      for (const pred of match.predictions) {
+        if (!pred.userId) continue;
+
+        const scoreResult = calculateMatchScore(pred, match);
+
+        const existingScore = await prisma.score.findFirst({
+          where: { matchId: match.id, userId: pred.userId },
+        });
+
+        if (existingScore) {
+          await prisma.score.update({
+            where: { id: existingScore.id },
+            data: {
+              points: scoreResult.points,
+              reason: scoreResult.reason,
+              calculatedAt: new Date(),
+            },
+          });
+        } else {
+          await prisma.score.create({
+            data: {
+              matchId: match.id,
+              userId: pred.userId,
+              points: scoreResult.points,
+              reason: scoreResult.reason,
+            },
+          });
+        }
+      }
     }
   }
 
@@ -219,8 +580,12 @@ export async function recalculateAllScoresAction() {
   safeRevalidatePath('/settings');
 }
 
-// 5. Borrar todos los resultados simulados
+/**
+ * Borrar todos los resultados simulados (Requiere Admin).
+ */
 export async function clearSimulatedResultsAction() {
+  await requireAdmin();
+
   const simulatedMatches = await prisma.match.findMany({
     where: { resultSource: 'MANUAL_SIMULATION' },
   });
@@ -251,14 +616,18 @@ export async function clearSimulatedResultsAction() {
   safeRevalidatePath('/settings');
 }
 
-// 6. CRUD Partidos: Crear Partido
+/**
+ * Crear Partido (Requiere Admin).
+ */
 export async function createMatchAction(data: {
   stage: string;
   groupName?: string;
   homeTeam: string;
   awayTeam: string;
-  kickoffAt?: string; // ISO String
+  kickoffAt?: string;
 }) {
+  await requireAdmin();
+
   const created = await prisma.match.create({
     data: {
       stage: data.stage,
@@ -278,7 +647,9 @@ export async function createMatchAction(data: {
   return created;
 }
 
-// 7. CRUD Partidos: Editar Partido
+/**
+ * Editar Partido (Requiere Admin).
+ */
 export async function updateMatchAction(
   matchId: string,
   data: {
@@ -289,6 +660,8 @@ export async function updateMatchAction(
     kickoffAt?: string;
   }
 ) {
+  await requireAdmin();
+
   const updated = await prisma.match.update({
     where: { id: matchId },
     data: {
@@ -308,8 +681,12 @@ export async function updateMatchAction(
   return updated;
 }
 
-// 8. CRUD Partidos: Eliminar Partido
+/**
+ * Eliminar Partido (Requiere Admin).
+ */
 export async function deleteMatchAction(matchId: string) {
+  await requireAdmin();
+
   const deleted = await prisma.match.delete({
     where: { id: matchId },
   });
@@ -322,12 +699,16 @@ export async function deleteMatchAction(matchId: string) {
   return deleted;
 }
 
-// 9. Cargar Semilla Inicial de Partidos de Ejemplo Manualmente
+/**
+ * Cargar Semilla de Partidos Manualmente (Requiere Admin).
+ */
 export async function seedMatchesAction() {
-  // Llamamos a las operaciones de vaciado y repoblación
+  const user = await requireAdmin();
+  const userId = user.id;
+
   const createdMatches = [];
-  
-  // Limpiar
+
+  // Limpiar base de datos
   await prisma.score.deleteMany({});
   await prisma.prediction.deleteMany({});
   await prisma.match.deleteMany({});
@@ -453,7 +834,7 @@ export async function seedMatchesAction() {
     createdMatches.push(created);
   }
 
-  // Crear predicciones iniciales
+  // Crear predicciones iniciales asignadas al admin
   const predictionsData = [
     {
       matchIndex: 1,
@@ -508,6 +889,7 @@ export async function seedMatchesAction() {
       await prisma.prediction.create({
         data: {
           matchId: match.id,
+          userId,
           predictedHomeScore: pred.predictedHomeScore,
           predictedAwayScore: pred.predictedAwayScore,
           predictedHomePenalties: pred.predictedHomePenalties ?? null,
@@ -515,7 +897,7 @@ export async function seedMatchesAction() {
           predictedWinner: pred.predictedWinner ?? null,
         },
       });
-      await recalculateMatchScore(match.id);
+      await recalculateMatchScore(match.id, userId);
     }
   }
 
@@ -526,38 +908,54 @@ export async function seedMatchesAction() {
   safeRevalidatePath('/settings');
 }
 
-// 10. Exportar todos los datos en formato JSON completo
+/**
+ * Exportar todos los datos (Requiere Admin).
+ */
 export async function exportDataAction() {
+  await requireAdmin();
+
   const matches = await prisma.match.findMany({
     include: {
-      prediction: true,
-      score: true,
+      predictions: true,
+      scores: true,
     },
   });
 
   return JSON.stringify(matches, null, 2);
 }
 
-// 11. Acciones para la integración de API-Football
+/**
+ * Sincronizar API (Requiere Admin).
+ */
 export async function syncTournamentAction(syncType: 'FULL' | 'DAILY' | 'LIVE' | 'MANUAL') {
+  await requireAdmin();
+
   const result = await syncTournament(syncType);
-  
+
   safeRevalidatePath('/');
   safeRevalidatePath('/predictions');
   safeRevalidatePath('/results');
   safeRevalidatePath('/scores');
   safeRevalidatePath('/settings');
-  
+
   return result;
 }
 
+/**
+ * Obtener logs de sync (Requiere Admin).
+ */
 export async function getLastSyncLogAction() {
+  await requireAdmin();
   return await prisma.syncLog.findFirst({
     orderBy: { startedAt: 'desc' }
   });
 }
 
+/**
+ * Config de API (Requiere Admin).
+ */
 export async function isApiKeyConfiguredAction() {
+  await requireAdmin();
   const providerType = process.env.FOOTBALL_PROVIDER || 'football-data';
   if (providerType === 'api-football') {
     return !!process.env.API_FOOTBALL_KEY;
@@ -565,12 +963,20 @@ export async function isApiKeyConfiguredAction() {
   return !!process.env.FOOTBALL_DATA_API_KEY;
 }
 
+/**
+ * Config de API (Requiere Admin).
+ */
 export async function getActiveProviderAction() {
+  await requireAdmin();
   const providerType = process.env.FOOTBALL_PROVIDER || 'football-data';
   return providerType === 'api-football' ? 'api-football' : 'football-data';
 }
 
+/**
+ * Comparar base de datos con Excel (Requiere Admin).
+ */
 export async function compareExcelBackupAction() {
+  await requireAdmin();
   try {
     const report = await compareDatabaseWithExcel();
     return {
@@ -585,16 +991,20 @@ export async function compareExcelBackupAction() {
   }
 }
 
+/**
+ * Importar calendario desde Excel (Requiere Admin).
+ */
 export async function importExcelBackupAction() {
+  await requireAdmin();
   try {
     const result = await importExcelBackup();
-    
+
     safeRevalidatePath('/');
     safeRevalidatePath('/predictions');
     safeRevalidatePath('/results');
     safeRevalidatePath('/scores');
     safeRevalidatePath('/settings');
-    
+
     return {
       success: true,
       message: `Importación completada con éxito. Creados: ${result.createdCount}, Actualizados: ${result.updatedCount}`,
@@ -608,8 +1018,13 @@ export async function importExcelBackupAction() {
   }
 }
 
+/**
+ * Vista previa de importación de predicciones del usuario (Requiere User).
+ */
 export async function previewPredictionImportAction(formData: FormData) {
   try {
+    const user = await requireUser();
+
     const file = formData.get('file') as File;
     if (!file) {
       return { success: false, message: 'No se seleccionó ningún archivo' };
@@ -627,12 +1042,15 @@ export async function previewPredictionImportAction(formData: FormData) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    const report = await previewPredictionImport(buffer);
+    const report = await previewPredictionImport(buffer, user.id);
     return {
       success: true,
       report,
     };
   } catch (err: any) {
+    if (err.message === 'UNAUTHORIZED') {
+      return { success: false, message: 'No autorizado.' };
+    }
     return {
       success: false,
       message: err.message || 'Error al procesar la vista previa del archivo Excel',
@@ -640,8 +1058,13 @@ export async function previewPredictionImportAction(formData: FormData) {
   }
 }
 
+/**
+ * Confirmación de importación de predicciones del usuario (Requiere User).
+ */
 export async function confirmPredictionImportAction(formData: FormData) {
   try {
+    const user = await requireUser();
+
     const file = formData.get('file') as File;
     if (!file) {
       return { success: false, message: 'No se seleccionó ningún archivo' };
@@ -659,7 +1082,7 @@ export async function confirmPredictionImportAction(formData: FormData) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    const result = await confirmPredictionImport(buffer);
+    const result = await confirmPredictionImport(buffer, user.id);
 
     safeRevalidatePath('/');
     safeRevalidatePath('/predictions');
@@ -673,10 +1096,12 @@ export async function confirmPredictionImportAction(formData: FormData) {
       result,
     };
   } catch (err: any) {
+    if (err.message === 'UNAUTHORIZED') {
+      return { success: false, message: 'No autorizado.' };
+    }
     return {
       success: false,
       message: err.message || 'Error al confirmar la importación de predicciones',
     };
   }
 }
-

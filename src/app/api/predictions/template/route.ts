@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { generatePredictionTemplate } from '@/lib/excel-parser';
+import { requireUser } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
+    const user = await requireUser();
+
     const matches = await prisma.match.findMany({
       include: {
-        prediction: true
+        predictions: {
+          where: { userId: user.id }
+        }
       },
       orderBy: [
         { kickoffAt: 'asc' },
@@ -16,9 +21,15 @@ export async function GET(req: NextRequest) {
       ]
     });
 
+    // Map predictions array to prediction object
+    const matchesMapped = matches.map(m => ({
+      ...m,
+      prediction: m.predictions[0] || null
+    }));
+
     // Exclude test/simulation matches
     // Rule: Exclude matches where externalApiId is null, starts with admin-, test-, or indiv-
-    const realMatches = matches.filter(m => {
+    const realMatches = matchesMapped.filter(m => {
       if (!m.externalApiId) return false;
       const id = m.externalApiId.toLowerCase();
       if (id.startsWith('admin-') || id.startsWith('test-') || id.startsWith('indiv-')) return false;

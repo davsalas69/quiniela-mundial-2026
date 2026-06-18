@@ -6,6 +6,7 @@ import { FootballDataProvider } from '../lib/football-data-provider';
 import { NormalizedFixture } from '../lib/results-provider';
 import { previewPredictionImport, confirmPredictionImport, generatePredictionTemplate } from '../lib/excel-parser';
 import { upsertPrediction } from '../app/actions';
+import { setMockUser } from '../lib/auth';
 import * as XLSX from 'xlsx';
 import fs from 'fs';
 import path from 'path';
@@ -16,6 +17,7 @@ vi.mock('../lib/football-data-provider');
 
 describe('Synchronization Engine Tests', () => {
   let mockProviderInstance: any;
+  let testUser: any;
 
   beforeEach(async () => {
     // Clean up tables
@@ -23,6 +25,7 @@ describe('Synchronization Engine Tests', () => {
     await prisma.prediction.deleteMany({});
     await prisma.match.deleteMany({});
     await prisma.syncLog.deleteMany({});
+    await prisma.user.deleteMany({});
 
     vi.clearAllMocks();
 
@@ -40,6 +43,18 @@ describe('Synchronization Engine Tests', () => {
     (FootballDataProvider as any).mockImplementation(function() {
       return mockProviderInstance;
     });
+
+    // Create a mock user and set it globally
+    testUser = await prisma.user.create({
+      data: {
+        username: 'admin',
+        normalizedUsername: 'admin',
+        passwordHash: 'dummy',
+        role: 'ADMIN',
+        isActive: true,
+      }
+    });
+    setMockUser(testUser);
   });
 
   afterEach(async () => {
@@ -47,6 +62,7 @@ describe('Synchronization Engine Tests', () => {
     await prisma.prediction.deleteMany({});
     await prisma.match.deleteMany({});
     await prisma.syncLog.deleteMany({});
+    await prisma.user.deleteMany({});
   });
 
   // 1. Fixtures programados
@@ -260,7 +276,7 @@ describe('Synchronization Engine Tests', () => {
   });
 
   // 11. Doble sincronización (prevención de concurrencia)
-  test('11. Debería rechazar sincronización concurrente', async () => {
+  test('11. Debería registrar el log como fallido y lanzar error ante sincronización concurrente', async () => {
     // Crear log activo
     await prisma.syncLog.create({
       data: {
@@ -423,6 +439,7 @@ describe('Synchronization Engine Tests', () => {
     await prisma.prediction.create({
       data: {
         matchId: match.id,
+        userId: testUser.id,
         predictedHomeScore: 2,
         predictedAwayScore: 1,
       }
@@ -447,7 +464,7 @@ describe('Synchronization Engine Tests', () => {
     await processNormalizedFixture(fixture);
 
     // Comprobar puntaje recalculado en la base de datos
-    const score = await prisma.score.findUnique({ where: { matchId: match.id } });
+    const score = await prisma.score.findFirst({ where: { matchId: match.id, userId: testUser.id } });
     expect(score).toBeDefined();
     expect(score?.points).toBe(6); // Exact match points
   });
@@ -472,6 +489,7 @@ describe('Synchronization Engine Tests', () => {
     const pred = await prisma.prediction.create({
       data: {
         matchId: match.id,
+        userId: testUser.id,
         predictedHomeScore: 2,
         predictedAwayScore: 1,
       }
@@ -677,6 +695,8 @@ describe('FootballDataProvider Tests', () => {
 });
 
 describe('Excel Predictions Import Tests', () => {
+  let testUser: any;
+
   beforeEach(async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-01T00:00:00Z'));
@@ -685,6 +705,18 @@ describe('Excel Predictions Import Tests', () => {
     await prisma.score.deleteMany({});
     await prisma.prediction.deleteMany({});
     await prisma.match.deleteMany({});
+    await prisma.user.deleteMany({});
+
+    testUser = await prisma.user.create({
+      data: {
+        username: 'admin',
+        normalizedUsername: 'admin',
+        passwordHash: 'dummy',
+        role: 'ADMIN',
+        isActive: true,
+      }
+    });
+    setMockUser(testUser);
   });
 
   afterEach(() => {
@@ -704,7 +736,7 @@ describe('Excel Predictions Import Tests', () => {
     expect(fs.existsSync(filePath)).toBe(true);
 
     const buffer = fs.readFileSync(filePath);
-    const report = await previewPredictionImport(buffer);
+    const report = await previewPredictionImport(buffer, testUser.id);
 
     expect(report.totalRows).toBe(72);
     expect(report.items.length).toBe(72);
@@ -734,7 +766,7 @@ describe('Excel Predictions Import Tests', () => {
     ];
 
     const buffer = createMockWorkbookBuffer(rows);
-    const report = await previewPredictionImport(buffer);
+    const report = await previewPredictionImport(buffer, testUser.id);
 
     expect(report.totalRows).toBe(4);
     // Row 1: Negativo -> INVALID
@@ -771,7 +803,7 @@ describe('Excel Predictions Import Tests', () => {
     ];
 
     const buffer = createMockWorkbookBuffer(rows);
-    const report = await previewPredictionImport(buffer);
+    const report = await previewPredictionImport(buffer, testUser.id);
 
     expect(report.matchedCount).toBe(1);
     expect(report.items[0].status).toBe('VALID');
@@ -785,7 +817,7 @@ describe('Excel Predictions Import Tests', () => {
       [1, 46184.0, 'Inexistente 1', 'A', 1, 1, 'Inexistente 2'],
     ];
     const buffer1 = createMockWorkbookBuffer(rows1);
-    const report1 = await previewPredictionImport(buffer1);
+    const report1 = await previewPredictionImport(buffer1, testUser.id);
     expect(report1.notFoundCount).toBe(1);
     expect(report1.items[0].status).toBe('NOT_FOUND');
 
@@ -819,7 +851,7 @@ describe('Excel Predictions Import Tests', () => {
       [1, 46184.5, 'México', 'A', 2, 2, 'Sudáfrica'],
     ];
     const buffer2 = createMockWorkbookBuffer(rows2);
-    const report2 = await previewPredictionImport(buffer2);
+    const report2 = await previewPredictionImport(buffer2, testUser.id);
     expect(report2.ambiguousCount).toBe(1);
     expect(report2.items[0].status).toBe('AMBIGUOUS');
   });
@@ -860,7 +892,7 @@ describe('Excel Predictions Import Tests', () => {
     ];
 
     const buffer = createMockWorkbookBuffer(rows);
-    const report = await previewPredictionImport(buffer);
+    const report = await previewPredictionImport(buffer, testUser.id);
 
     expect(report.blockedCount).toBe(0); // No longer blocked!
     expect(report.newHistoryCount).toBe(2);
@@ -872,14 +904,14 @@ describe('Excel Predictions Import Tests', () => {
     expect(report.items[1].action).toBe('CREATE_RECALCULATE');
 
     // Confirm import administratively
-    const result = await confirmPredictionImport(buffer);
+    const result = await confirmPredictionImport(buffer, testUser.id);
     expect(result.success).toBe(true);
     expect(result.createdHistoryCount).toBe(2);
     expect(result.recalculatedCount).toBe(1); // Solo m2 tiene resultado real (2-1)
 
     // Check score of m2 (2-1 pred vs 2-1 actual = exact = 6 pts)
-    const score = await prisma.score.findUnique({
-      where: { matchId: m2.id }
+    const score = await prisma.score.findFirst({
+      where: { matchId: m2.id, userId: testUser.id }
     });
     expect(score).toBeDefined();
     expect(score?.points).toBe(6);
@@ -898,8 +930,9 @@ describe('Excel Predictions Import Tests', () => {
         resultSource: 'MANUAL_REAL',
         actualHomeScore: 2,
         actualAwayScore: 0,
-        prediction: {
+        predictions: {
           create: {
+            userId: testUser.id,
             predictedHomeScore: 1,
             predictedAwayScore: 1,
           }
@@ -913,14 +946,14 @@ describe('Excel Predictions Import Tests', () => {
     ];
 
     const buffer = createMockWorkbookBuffer(rows);
-    const result = await confirmPredictionImport(buffer);
+    const result = await confirmPredictionImport(buffer, testUser.id);
 
     expect(result.success).toBe(true);
     expect(result.updatedHistoryCount).toBe(1);
     expect(result.recalculatedCount).toBe(1);
 
-    const score = await prisma.score.findUnique({
-      where: { matchId: m.id }
+    const score = await prisma.score.findFirst({
+      where: { matchId: m.id, userId: testUser.id }
     });
     expect(score?.points).toBe(6); // Exact match score!
   });
@@ -988,7 +1021,7 @@ describe('Excel Predictions Import Tests', () => {
     ];
 
     const buffer = createMockWorkbookBuffer(rows);
-    const result = await confirmPredictionImport(buffer);
+    const result = await confirmPredictionImport(buffer, testUser.id);
 
     expect(result.success).toBe(true);
 
@@ -1036,21 +1069,41 @@ describe('Excel Predictions Import Tests', () => {
       throw new Error('Simulated score calculation error');
     });
 
-    await expect(confirmPredictionImport(buffer)).rejects.toThrow('Simulated score calculation error');
+    await expect(confirmPredictionImport(buffer, testUser.id)).rejects.toThrow('Simulated score calculation error');
 
     // Confirm rollback: prediction should NOT be in the DB
     const dbMatch = await prisma.match.findUnique({
       where: { id: m.id },
-      include: { prediction: true }
+      include: { predictions: true }
     });
 
-    expect(dbMatch?.prediction).toBeNull();
+    expect(dbMatch?.predictions.length).toBe(0);
     
     spy.mockRestore();
   });
 });
 
 describe('Individual Predictions Administrative Tests', () => {
+  let testUser: any;
+
+  beforeEach(async () => {
+    await prisma.score.deleteMany({});
+    await prisma.prediction.deleteMany({});
+    await prisma.match.deleteMany({});
+    await prisma.user.deleteMany({});
+
+    testUser = await prisma.user.create({
+      data: {
+        username: 'admin',
+        normalizedUsername: 'admin',
+        passwordHash: 'dummy',
+        role: 'ADMIN',
+        isActive: true,
+      }
+    });
+    setMockUser(testUser);
+  });
+
   test('Debería crear predicción individual para partido finalizado y recalcular puntaje', async () => {
     const m = await prisma.match.create({
       data: {
@@ -1078,15 +1131,18 @@ describe('Individual Predictions Administrative Tests', () => {
 
     const dbMatch = await prisma.match.findUnique({
       where: { id: m.id },
-      include: { prediction: true, score: true }
+      include: { predictions: true, scores: true }
     });
 
-    expect(dbMatch?.prediction?.predictedHomeScore).toBe(2);
-    expect(dbMatch?.prediction?.predictedAwayScore).toBe(1);
+    const pred = dbMatch?.predictions[0];
+    const score = dbMatch?.scores[0];
+
+    expect(pred?.predictedHomeScore).toBe(2);
+    expect(pred?.predictedAwayScore).toBe(1);
     
     // Debería calcular 6 puntos (marcador exacto)
-    expect(dbMatch?.score?.points).toBe(6);
-    expect(dbMatch?.score?.reason).toContain('Resultado exacto');
+    expect(score?.points).toBe(6);
+    expect(score?.reason).toContain('Resultado exacto');
 
     // No debe haber cambiado los campos del partido
     expect(dbMatch?.actualHomeScore).toBe(2);
@@ -1129,15 +1185,35 @@ describe('Individual Predictions Administrative Tests', () => {
     // Confirm rollback: prediction should NOT be in the DB
     const dbMatch = await prisma.match.findUnique({
       where: { id: m.id },
-      include: { prediction: true }
+      include: { predictions: true }
     });
 
-    expect(dbMatch?.prediction).toBeNull();
+    expect(dbMatch?.predictions.length).toBe(0);
     spy.mockRestore();
   });
 });
 
 describe('Official Template Generation and Import Tests', () => {
+  let testUser: any;
+
+  beforeEach(async () => {
+    await prisma.score.deleteMany({});
+    await prisma.prediction.deleteMany({});
+    await prisma.match.deleteMany({});
+    await prisma.user.deleteMany({});
+
+    testUser = await prisma.user.create({
+      data: {
+        username: 'admin',
+        normalizedUsername: 'admin',
+        passwordHash: 'dummy',
+        role: 'ADMIN',
+        isActive: true,
+      }
+    });
+    setMockUser(testUser);
+  });
+
   test('Debería generar una plantilla oficial con matchId y formato correcto', async () => {
     const m = await prisma.match.create({
       data: {
@@ -1152,9 +1228,15 @@ describe('Official Template Generation and Import Tests', () => {
     });
 
     const matches = await prisma.match.findMany({
-      include: { prediction: true }
+      include: { predictions: true }
     });
-    const buffer = generatePredictionTemplate(matches);
+
+    const matchesMapped = matches.map(mat => ({
+      ...mat,
+      prediction: mat.predictions[0] || null
+    }));
+
+    const buffer = generatePredictionTemplate(matchesMapped);
     expect(buffer).toBeInstanceOf(Buffer);
 
     const wb = XLSX.read(buffer, { type: 'buffer' });
@@ -1221,7 +1303,7 @@ describe('Official Template Generation and Import Tests', () => {
     XLSX.utils.book_append_sheet(wb, ws, 'Pronosticos');
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
-    const preview = await previewPredictionImport(buffer);
+    const preview = await previewPredictionImport(buffer, testUser.id);
     expect(preview.importMethod).toBe('MATCH_ID');
     expect(preview.matchIdFoundCount).toBe(2);
     expect(preview.matchIdNotFoundCount).toBe(0);
@@ -1238,7 +1320,7 @@ describe('Official Template Generation and Import Tests', () => {
     expect(finishedItem?.action).toBe('CREATE_RECALCULATE');
     expect(finishedItem?.isAdministrative).toBe(true);
 
-    const confirm = await confirmPredictionImport(buffer);
+    const confirm = await confirmPredictionImport(buffer, testUser.id);
     expect(confirm.success).toBe(true);
     expect(confirm.createdFutureCount).toBe(1);
     expect(confirm.createdHistoryCount).toBe(1);
@@ -1246,18 +1328,17 @@ describe('Official Template Generation and Import Tests', () => {
 
     const dbFuture = await prisma.match.findUnique({
       where: { id: mFuture.id },
-      include: { prediction: true }
+      include: { predictions: true }
     });
-    expect(dbFuture?.prediction?.predictedHomeScore).toBe(2);
-    expect(dbFuture?.prediction?.predictedAwayScore).toBe(1);
+    expect(dbFuture?.predictions[0]?.predictedHomeScore).toBe(2);
+    expect(dbFuture?.predictions[0]?.predictedAwayScore).toBe(1);
 
     const dbFinished = await prisma.match.findUnique({
       where: { id: mFinished.id },
-      include: { prediction: true, score: true }
+      include: { predictions: true, scores: true }
     });
-    expect(dbFinished?.prediction?.predictedHomeScore).toBe(1);
-    expect(dbFinished?.prediction?.predictedAwayScore).toBe(1);
-    expect(dbFinished?.score?.points).toBe(6);
+    expect(dbFinished?.predictions[0]?.predictedHomeScore).toBe(1);
+    expect(dbFinished?.predictions[0]?.predictedAwayScore).toBe(1);
+    expect(dbFinished?.scores[0]?.points).toBe(6);
   });
 });
-
