@@ -24,7 +24,7 @@ export interface ScoreResult {
 
 /**
  * Calcula de forma pura el puntaje obtenido por una predicción para un partido.
- * 
+ *
  * Reglas de Prioridad:
  * 1. Fase final + empate exacto + penales exactos = 8 puntos
  * 2. Marcador/Resultado exacto = 6 puntos
@@ -89,7 +89,7 @@ export function calculateMatchScore(
   const isWinnerCorrect = predWinner === actWinner && predWinner !== 'DRAW';
   // Si ambos predijeron empate y terminó en empate, se considera resultado correcto de tendencia
   const isDrawOutcomeCorrect = predHome === predAway && actHome === actAway;
-  
+
   const isOutcomeCorrect = isWinnerCorrect || isDrawOutcomeCorrect;
 
   const predTotalGoals = predHome + predAway;

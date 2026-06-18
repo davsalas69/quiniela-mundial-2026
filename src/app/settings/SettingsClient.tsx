@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { 
-  recalculateAllScoresAction, 
-  clearSimulatedResultsAction, 
+import {
+  recalculateAllScoresAction,
+  clearSimulatedResultsAction,
   seedMatchesAction,
   createMatchAction,
   updateMatchAction,
@@ -13,21 +13,23 @@ import {
   compareExcelBackupAction,
   importExcelBackupAction,
   previewPredictionImportAction,
-  confirmPredictionImportAction
+  confirmPredictionImportAction,
+  resetPlayerAccessCodeAction
 } from '../actions';
-import { 
-  RefreshCw, 
-  Trash2, 
-  Database, 
-  Download, 
-  Plus, 
-  Edit3, 
-  Trash, 
-  X, 
-  Check, 
+import {
+  RefreshCw,
+  Trash2,
+  Database,
+  Download,
+  Plus,
+  Edit3,
+  Trash,
+  X,
+  Check,
   Calendar,
   AlertTriangle,
-  Upload
+  Upload,
+  KeyRound
 } from 'lucide-react';
 
 interface Match {
@@ -39,12 +41,12 @@ interface Match {
   kickoffAt: string | Date | null;
 }
 
-export default function SettingsClient({ 
+export default function SettingsClient({
   initialMatches,
   initialLastSyncLog,
   isApiKeyConfigured,
   activeProvider
-}: { 
+}: {
   initialMatches: Match[];
   initialLastSyncLog: any;
   isApiKeyConfigured: boolean;
@@ -57,6 +59,10 @@ export default function SettingsClient({
   const [excelReport, setExcelReport] = useState<any>(null);
   const [excelError, setExcelError] = useState<string | null>(null);
   const [syncLoadingType, setSyncLoadingType] = useState<string | null>(null);
+
+  // States for player access code reset
+  const [resetUsername, setResetUsername] = useState('');
+  const [resetNewCode, setResetNewCode] = useState('');
 
   const handleSync = (type: 'FULL' | 'DAILY' | 'LIVE' | 'MANUAL') => {
     setSyncLoadingType(type);
@@ -132,7 +138,7 @@ export default function SettingsClient({
     awayTeam: '',
     kickoffAt: '',
   });
-  
+
   // Prediction import states
   const [predictionFile, setPredictionFile] = useState<File | null>(null);
   const [predictionPreview, setPredictionPreview] = useState<any | null>(null);
@@ -252,9 +258,9 @@ export default function SettingsClient({
     try {
       const dataStr = await exportDataAction();
       const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-      
+
       const exportFileDefaultName = `quiniela_2026_backup_${new Date().toISOString().split('T')[0]}.json`;
-      
+
       const linkElement = document.createElement('a');
       linkElement.setAttribute('href', dataUri);
       linkElement.setAttribute('download', exportFileDefaultName);
@@ -263,6 +269,45 @@ export default function SettingsClient({
       console.error(err);
       alert('Error al exportar datos.');
     }
+  };
+
+  const handleResetAccessCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedUser = resetUsername.trim();
+    const trimmedCode = resetNewCode.trim().toUpperCase();
+
+    if (!trimmedUser || !trimmedCode) {
+      alert('Todos los campos son obligatorios.');
+      return;
+    }
+
+    if (trimmedCode.length < 4 || trimmedCode.length > 12) {
+      alert('El nuevo código debe tener entre 4 y 12 caracteres.');
+      return;
+    }
+
+    if (!confirm(`¿Estás seguro de que deseas restablecer el código de acceso para el jugador @${trimmedUser}?`)) {
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        const formData = new FormData();
+        formData.append('username', trimmedUser);
+        formData.append('newCode', trimmedCode);
+
+        const res = await resetPlayerAccessCodeAction(formData);
+        if (res.success) {
+          alert('Código de acceso del jugador restablecido exitosamente.');
+          setResetUsername('');
+          setResetNewCode('');
+        } else {
+          alert(res.message || 'Error al restablecer el código.');
+        }
+      } catch (err) {
+        alert('Ocurrió un error inesperado al restablecer el código.');
+      }
+    });
   };
 
   // CRUD: Crear Partido
@@ -376,10 +421,10 @@ export default function SettingsClient({
 
   return (
     <div className="space-y-8 animate-fade-in">
-      
+
       {/* DB Utility Panel */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        
+
         {/* Card: Recalculate */}
         <div className="p-6 rounded-2xl bg-[#0f0f15]/85 border border-[#1e1e24] flex flex-col justify-between space-y-4">
           <div>
@@ -458,6 +503,45 @@ export default function SettingsClient({
           >
             Restaurar BD
           </button>
+        </div>
+
+        {/* Card: Reset Player Access Code */}
+        <div className="p-6 rounded-2xl bg-[#0f0f15]/85 border border-[#1e1e24] flex flex-col justify-between space-y-4">
+          <div>
+            <h3 className="font-extrabold text-sm text-zinc-100 flex items-center space-x-2">
+              <KeyRound className="h-4 w-4 text-amber-500" />
+              <span>Restablecer Código de Jugador</span>
+            </h3>
+            <p className="text-xs text-zinc-500 mt-2 font-medium">
+              Cambia o restablece el código de acceso de cualquier jugador registrado en el sistema.
+            </p>
+            <form onSubmit={handleResetAccessCode} className="mt-4 space-y-2.5">
+              <input
+                type="text"
+                value={resetUsername}
+                onChange={(e) => setResetUsername(e.target.value)}
+                placeholder="Usuario del jugador"
+                className="w-full bg-[#14141d] border border-[#272737] rounded-lg px-3 py-2 text-xs font-bold text-white placeholder-zinc-600 focus:outline-none focus:border-[#6d28d9]"
+                required
+              />
+              <input
+                type="text"
+                value={resetNewCode}
+                onChange={(e) => setResetNewCode(e.target.value.toUpperCase().replace(/\s/g, ''))}
+                placeholder="Nuevo código (4-12)"
+                className="w-full bg-[#14141d] border border-[#272737] rounded-lg px-3 py-2 text-xs font-bold text-white placeholder-zinc-600 uppercase focus:outline-none focus:border-[#6d28d9]"
+                maxLength={12}
+                required
+              />
+              <button
+                type="submit"
+                disabled={isPending}
+                className="w-full py-2 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-xs font-bold text-amber-400 border border-amber-500/20 transition-all duration-200 cursor-pointer"
+              >
+                Restablecer Código
+              </button>
+            </form>
+          </div>
         </div>
 
       </div>
@@ -576,8 +660,8 @@ export default function SettingsClient({
                     {lastSyncLog.syncType}
                   </span>
                   <span className={`px-2 py-0.5 rounded font-black ${
-                    lastSyncLog.status === 'SUCCESS' 
-                      ? 'bg-emerald-950/40 text-emerald-400' 
+                    lastSyncLog.status === 'SUCCESS'
+                      ? 'bg-emerald-950/40 text-emerald-400'
                       : lastSyncLog.status === 'FAILED'
                       ? 'bg-rose-950/40 text-rose-400'
                       : 'bg-amber-950/40 text-amber-400'
@@ -590,9 +674,9 @@ export default function SettingsClient({
               <div className="space-y-1 col-span-2">
                 <span className="text-zinc-500">Resumen de Registros:</span>
                 <p className="text-zinc-300 font-medium">
-                  Creados: <span className="font-extrabold text-emerald-400">{lastSyncLog.createdCount}</span> • 
-                  Actualizados: <span className="font-extrabold text-blue-400">{lastSyncLog.updatedCount}</span> • 
-                  Ignorados: <span className="font-extrabold text-zinc-500">{lastSyncLog.skippedCount}</span> • 
+                  Creados: <span className="font-extrabold text-emerald-400">{lastSyncLog.createdCount}</span> •
+                  Actualizados: <span className="font-extrabold text-blue-400">{lastSyncLog.updatedCount}</span> •
+                  Ignorados: <span className="font-extrabold text-zinc-500">{lastSyncLog.skippedCount}</span> •
                   Errores: <span className="font-extrabold text-rose-400">{lastSyncLog.errorCount}</span>
                 </p>
               </div>
@@ -618,7 +702,7 @@ export default function SettingsClient({
           <div className="p-5 rounded-xl bg-[#13131a] border border-[#1e1e24] space-y-4 animate-fade-in">
             <div className="flex justify-between items-center text-xs font-bold border-b border-zinc-800 pb-3">
               <span className="text-zinc-400 uppercase tracking-wider">Reporte de Validación de Respaldo Excel</span>
-              <button 
+              <button
                 onClick={() => { setExcelReport(null); setExcelError(null); }}
                 className="text-zinc-500 hover:text-zinc-300 cursor-pointer"
               >
@@ -1169,7 +1253,7 @@ export default function SettingsClient({
             const isEditing = editingId === m.id;
 
             return (
-              <div 
+              <div
                 key={m.id}
                 className="p-4 rounded-xl bg-[#13131a] border border-[#1e1e24] flex flex-col md:flex-row md:items-center justify-between gap-4"
               >

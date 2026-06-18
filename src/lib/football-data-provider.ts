@@ -85,7 +85,7 @@ export class FootballDataProvider implements FootballResultsProvider {
     const externalApiId = apiFixture.id.toString();
     const stage = this.normalizeStage(apiFixture.stage);
     const groupName = this.normalizeGroup(apiFixture.group);
-    
+
     const homeTeam = apiFixture.homeTeam.name || 'TBD';
     const awayTeam = apiFixture.awayTeam.name || 'TBD';
     const kickoffAt = apiFixture.utcDate ? new Date(apiFixture.utcDate) : null;

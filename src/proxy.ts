@@ -7,32 +7,40 @@ export default function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const sessionToken = request.cookies.get(COOKIE_NAME)?.value;
 
-  const publicRoutes = ['/login', '/register', '/setup'];
+  const publicRoutes = ['/', '/login', '/login/admin', '/register', '/setup'];
   const isPublicRoute = publicRoutes.some(route => pathname === route);
-  
+
   // Excluir recursos estáticos y assets internos
-  const isAsset = pathname.startsWith('/_next') || 
+  const isAsset = pathname.startsWith('/_next') ||
                   pathname.startsWith('/api/cron') ||
-                  pathname.includes('.') || 
+                  pathname.includes('.') ||
                   pathname === '/favicon.ico';
 
   if (isAsset) {
     return NextResponse.next();
   }
 
-  // Si no hay cookie y se intenta acceder a una ruta protegida -> redirigir a /login
+  // Si no hay cookie y se intenta acceder a una ruta protegida -> redirigir al home con showAuth=true
   if (!sessionToken && !isPublicRoute) {
-    const loginUrl = new URL('/login', request.url);
-    return NextResponse.redirect(loginUrl);
+    const homeUrl = new URL('/', request.url);
+    homeUrl.searchParams.set('showAuth', 'true');
+    return NextResponse.redirect(homeUrl);
   }
 
-  // Si hay cookie y se intenta acceder a /login o /register -> redirigir al home
-  if (sessionToken && (pathname === '/login' || pathname === '/register')) {
+  // Si hay cookie y se intenta acceder a /login, /login/admin o /register -> redirigir al home
+  if (sessionToken && (pathname === '/login' || pathname === '/login/admin' || pathname === '/register')) {
     const homeUrl = new URL('/', request.url);
     return NextResponse.redirect(homeUrl);
   }
 
-  return NextResponse.next();
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-pathname', pathname);
+
+  return NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
 }
 
 export const config = {

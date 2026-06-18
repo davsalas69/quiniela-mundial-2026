@@ -3,11 +3,11 @@ import Link from 'next/link';
 import { getMatchesWithData } from '@/app/actions';
 import { getCurrentUser } from '@/lib/auth';
 import { redirect } from 'next/navigation';
-import { 
-  Award, 
-  CheckCircle, 
-  Clock, 
-  AlertTriangle, 
+import {
+  Award,
+  CheckCircle,
+  Clock,
+  AlertTriangle,
   ArrowRight,
   TrendingUp,
   Percent,
@@ -23,9 +23,7 @@ export type MatchWithData = Match & {
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  if (!user) {
-    redirect('/login');
-  }
+  const isLoggedIn = !!user;
 
   const matches: MatchWithData[] = await getMatchesWithData();
 
@@ -48,16 +46,18 @@ export default async function DashboardPage() {
   let points1 = 0;
   let points0 = 0;
 
-  for (const m of matches) {
-    if (m.score) {
-      totalPoints += m.score.points;
-      switch (m.score.points) {
-        case 8: points8++; break;
-        case 6: points6++; break;
-        case 5: points5++; break;
-        case 4: points4++; break;
-        case 1: points1++; break;
-        case 0: points0++; break;
+  if (isLoggedIn) {
+    for (const m of matches) {
+      if (m.score) {
+        totalPoints += m.score.points;
+        switch (m.score.points) {
+          case 8: points8++; break;
+          case 6: points6++; break;
+          case 5: points5++; break;
+          case 4: points4++; break;
+          case 1: points1++; break;
+          case 0: points0++; break;
+        }
       }
     }
   }
@@ -66,9 +66,9 @@ export default async function DashboardPage() {
   const successfulPredictionsCount = matches.filter(
     (m: MatchWithData) => m.score && m.score.points >= 4
   ).length;
-  
-  const accuracyRate = finishedCount > 0 
-    ? Math.round((successfulPredictionsCount / finishedCount) * 100) 
+
+  const accuracyRate = finishedCount > 0
+    ? Math.round((successfulPredictionsCount / finishedCount) * 100)
     : 0;
 
   // Próximos partidos (máximo 4)
@@ -101,10 +101,12 @@ export default async function DashboardPage() {
             DASHBOARD GENERAL
           </h2>
           <p className="text-zinc-400 text-sm font-medium">
-            Resumen de tu desempeño y pronósticos para el Mundial 2026.
+            {isLoggedIn
+              ? 'Resumen de tu desempeño y pronósticos para el Mundial 2026.'
+              : 'Únete a la emoción, registra tus pronósticos y compite con otros jugadores.'}
           </p>
         </div>
-        
+
         <div className="flex space-x-3">
           <Link
             href="/predictions"
@@ -115,6 +117,35 @@ export default async function DashboardPage() {
           </Link>
         </div>
       </div>
+
+      {/* Welcome banner for non-logged-in visitors */}
+      {!isLoggedIn && (
+        <div className="p-8 rounded-2xl bg-gradient-to-br from-[#1e1b4b]/40 via-[#0f0f15]/90 to-[#18181b]/50 border border-[#312e81]/40 shadow-xl relative overflow-hidden group">
+          <div className="absolute top-0 right-0 -mt-4 -mr-4 w-72 h-72 bg-[#6d28d9]/10 rounded-full blur-3xl group-hover:bg-[#6d28d9]/15 transition-colors duration-500"></div>
+          <div className="relative z-10 space-y-4">
+            <h3 className="text-2xl font-black text-white tracking-tight bg-gradient-to-r from-white via-zinc-200 to-zinc-400 bg-clip-text text-transparent">
+              ¡BIENVENIDO A LA QUINIELA MUNDIAL 2026!
+            </h3>
+            <p className="text-sm text-zinc-300 max-w-3xl leading-relaxed font-medium">
+              Únete a la emoción de la Copa del Mundo. Visualiza los partidos, consulta los resultados en vivo y, cuando estés listo para registrar tus pronósticos o competir con otros, crea tu perfil en segundos.
+            </p>
+            <div className="pt-2 flex flex-wrap gap-4">
+              <Link
+                href="/?showAuth=true"
+                className="px-6 py-3 rounded-xl bg-[#6d28d9] hover:bg-[#5b21b6] text-sm font-black uppercase tracking-wider transition-all duration-200 shadow-lg shadow-[#6d28d9]/30 hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+              >
+                Crear mi quiniela
+              </Link>
+              <Link
+                href="/?showAuth=true&mode=login"
+                className="px-6 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-sm font-black uppercase tracking-wider transition-all duration-200 border border-zinc-700 cursor-pointer"
+              >
+                Ya tengo una quiniela
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -172,8 +203,8 @@ export default async function DashboardPage() {
             </span>
             {/* Progress bar */}
             <div className="w-full bg-[#1e1e24] rounded-full h-1.5 mt-2">
-              <div 
-                className="bg-[#6d28d9] h-1.5 rounded-full" 
+              <div
+                className="bg-[#6d28d9] h-1.5 rounded-full"
                 style={{ width: `${(totalPredictionsCount / totalMatches) * 100}%` }}
               ></div>
             </div>
@@ -203,7 +234,7 @@ export default async function DashboardPage() {
 
       {/* Main Grid: Breakdown & Play Lists */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
+
         {/* Left: Points breakdown by Rule */}
         <div className="lg:col-span-1 p-6 rounded-2xl bg-[#0f0f15]/75 border border-[#1e1e24] space-y-6">
           <div>
@@ -287,7 +318,7 @@ export default async function DashboardPage() {
               ) : (
                 <div className="space-y-4">
                   {recentMatches.map((m) => (
-                    <div 
+                    <div
                       key={m.id}
                       className="p-3 rounded-xl bg-[#13131a] border border-[#1e1e24] space-y-2"
                     >
@@ -299,7 +330,7 @@ export default async function DashboardPage() {
                           <span className="text-zinc-500">[Real]</span>
                         )}
                       </div>
-                      
+
                       <div className="flex justify-between items-center text-xs">
                         <span className="font-bold text-zinc-300 w-24 truncate">{m.homeTeam}</span>
                         <div className="px-2.5 py-0.5 rounded bg-zinc-800 text-white font-black">
@@ -344,20 +375,20 @@ export default async function DashboardPage() {
               ) : (
                 <div className="space-y-4">
                   {upcomingMatches.map((m) => (
-                    <div 
+                    <div
                       key={m.id}
                       className="p-3 rounded-xl bg-[#13131a] border border-[#1e1e24] space-y-2 hover:border-[#6d28d9]/40 transition-colors duration-200"
                     >
                       <div className="flex justify-between text-[10px] text-zinc-500 font-bold uppercase">
                         <span>{m.stage.replace('_', ' ')}</span>
                         <span>
-                          {m.kickoffAt 
+                          {m.kickoffAt
                             ? new Date(m.kickoffAt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })
                             : 'Fecha pendiente'
                           }
                         </span>
                       </div>
-                      
+
                       <div className="flex justify-between items-center text-xs">
                         <span className="font-bold text-zinc-300 w-24 truncate">{m.homeTeam}</span>
                         <div className="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-500 font-semibold text-[10px]">

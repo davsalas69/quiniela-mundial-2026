@@ -43,8 +43,8 @@ export default async function SettingsPage() {
         </p>
       </div>
 
-      <SettingsClient 
-        initialMatches={matches} 
+      <SettingsClient
+        initialMatches={matches}
         initialLastSyncLog={lastSyncLog}
         isApiKeyConfigured={isApiKeyConfigured}
         activeProvider={providerType}

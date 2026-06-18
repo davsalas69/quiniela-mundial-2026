@@ -1,18 +1,18 @@
 import { vi, describe, test, expect, beforeEach, afterEach } from 'vitest';
 import { prisma } from '../lib/db';
-import { 
-  setupAdminAction, 
-  loginAction, 
-  registerAction, 
-  logoutAction, 
-  upsertPrediction, 
-  getMatchesWithData 
+import {
+  setupAdminAction,
+  loginAction,
+  registerAction,
+  logoutAction,
+  upsertPrediction,
+  getMatchesWithData
 } from '../app/actions';
-import { 
-  getCurrentUser, 
-  setMockUser, 
-  hashPassword, 
-  verifyPassword 
+import {
+  getCurrentUser,
+  setMockUser,
+  hashPassword,
+  verifyPassword
 } from '../lib/auth';
 import { checkRateLimit, resetRateLimit } from '../lib/rate-limit';
 
@@ -119,8 +119,8 @@ describe('Multi-User Authentication System Tests', () => {
     // Registrar usuario exitoso
     const fdValid = new FormData();
     fdValid.append('username', 'juan_perez');
-    fdValid.append('password', 'MyPassword123!');
-    fdValid.append('confirmPassword', 'MyPassword123!');
+    fdValid.append('password', 'JUAN2026');
+    fdValid.append('confirmPassword', 'JUAN2026');
 
     const resValid = await registerAction(fdValid);
     expect(resValid.success).toBe(true);
@@ -134,14 +134,14 @@ describe('Multi-User Authentication System Tests', () => {
     // Validación: Usuario repetido
     const resRepeat = await registerAction(fdValid);
     expect(resRepeat.success).toBe(false);
-    expect(resRepeat.message).toContain('ya existe');
+    expect(resRepeat.message).toContain('ya está en uso');
 
     // Validación: Nombre reservado
     const fdReserved = new FormData();
     fdReserved.append('username', 'Admin');
-    fdReserved.append('password', 'MyPassword123!');
-    fdReserved.append('confirmPassword', 'MyPassword123!');
-    
+    fdReserved.append('password', 'ADMIN2026');
+    fdReserved.append('confirmPassword', 'ADMIN2026');
+
     const resReserved = await registerAction(fdReserved);
     expect(resReserved.success).toBe(false);
     expect(resReserved.message).toContain('no está disponible');
@@ -149,9 +149,9 @@ describe('Multi-User Authentication System Tests', () => {
     // Validación: Caracteres no permitidos
     const fdInvalidChars = new FormData();
     fdInvalidChars.append('username', 'juan.perez!');
-    fdInvalidChars.append('password', 'MyPassword123!');
-    fdInvalidChars.append('confirmPassword', 'MyPassword123!');
-    
+    fdInvalidChars.append('password', 'JUAN2026');
+    fdInvalidChars.append('confirmPassword', 'JUAN2026');
+
     const resInvalidChars = await registerAction(fdInvalidChars);
     expect(resInvalidChars.success).toBe(false);
     expect(resInvalidChars.message).toContain('alfanuméricos');
@@ -159,19 +159,19 @@ describe('Multi-User Authentication System Tests', () => {
     // Validación: Contraseña corta
     const fdShortPass = new FormData();
     fdShortPass.append('username', 'maria_db');
-    fdShortPass.append('password', '12345');
-    fdShortPass.append('confirmPassword', '12345');
-    
+    fdShortPass.append('password', '123');
+    fdShortPass.append('confirmPassword', '123');
+
     const resShortPass = await registerAction(fdShortPass);
     expect(resShortPass.success).toBe(false);
-    expect(resShortPass.message).toContain('al menos 8');
+    expect(resShortPass.message).toContain('entre 4 y 12');
   });
 
   // --- ESCENARIO 4: Login y Rate Limiting ---
   test('Debería bloquear accesos por rate limiting tras múltiples intentos fallidos', async () => {
     const username = 'target_user';
     const normalizedUsername = 'target_user';
-    
+
     // Crear el usuario activo
     await prisma.user.create({
       data: {
@@ -224,7 +224,7 @@ describe('Multi-User Authentication System Tests', () => {
     mockCookiesStore.clear();
     const tokenA = 'token_super_secreto_para_user_a_32bytes_min';
     const tokenHashA = require('crypto').createHash('sha256').update(tokenA).digest('hex');
-    
+
     await prisma.session.create({
       data: {
         tokenHash: tokenHashA,
@@ -247,7 +247,7 @@ describe('Multi-User Authentication System Tests', () => {
     mockCookiesStore.clear();
     const tokenB = 'token_super_secreto_para_user_b_32bytes_min';
     const tokenHashB = require('crypto').createHash('sha256').update(tokenB).digest('hex');
-    
+
     await prisma.session.create({
       data: {
         tokenHash: tokenHashB,
@@ -291,7 +291,7 @@ describe('Multi-User Authentication System Tests', () => {
 
     const token = 'desactivado_token_opaque_32_bytes_value';
     const tokenHash = require('crypto').createHash('sha256').update(token).digest('hex');
-    
+
     await prisma.session.create({
       data: {
         tokenHash,

@@ -1,12 +1,12 @@
 import { prisma } from '../lib/db';
 import { calculateMatchScore } from '../lib/scoring';
-import { 
-  recalculateMatchScore, 
-  recalculateAllScoresAction, 
-  clearSimulatedResultsAction, 
-  exportDataAction, 
-  upsertPrediction, 
-  upsertMatchResult 
+import {
+  recalculateMatchScore,
+  recalculateAllScoresAction,
+  clearSimulatedResultsAction,
+  exportDataAction,
+  upsertPrediction,
+  upsertMatchResult
 } from '../app/actions';
 import { setMockUser } from '../lib/auth';
 

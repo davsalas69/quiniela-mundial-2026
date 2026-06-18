@@ -15,10 +15,12 @@ import {
   destroySession,
   getCurrentUser,
   requireUser,
-  requireAdmin
+  requireAdmin,
+  validateAccessCode,
+  hashToken
 } from '@/lib/auth';
 import { checkRateLimit, resetRateLimit } from '@/lib/rate-limit';
-import { headers } from 'next/headers';
+import { headers, cookies } from 'next/headers';
 
 // Auxiliar para revalidar caché en Next.js
 function safeRevalidatePath(path: string) {
@@ -160,9 +162,59 @@ export async function setupAdminAction(formData: FormData) {
 }
 
 /**
- * Inicio de sesión de usuarios.
+ * Inicio de sesión de jugadores (USER).
  */
 export async function loginAction(formData: FormData) {
+  const ip = await getClientIp();
+  const username = (formData.get('username') as string || '').trim();
+  const password = formData.get('password') as string;
+
+  if (!username || !password) {
+    return { success: false, message: 'El usuario y el código de acceso son requeridos.' };
+  }
+
+  const normalizedUsername = username.toLowerCase();
+
+  // Rate Limiting
+  const rateLimitResult = await checkRateLimit(ip, normalizedUsername);
+  if (!rateLimitResult.allowed) {
+    return {
+      success: false,
+      message: `Demasiados intentos. Por favor, reintente en ${rateLimitResult.retryAfterSeconds} segundos.`
+    };
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { normalizedUsername },
+    });
+
+    // Solo permitir jugadores (role USER)
+    if (!user || user.role !== 'USER' || !user.isActive) {
+      return { success: false, message: 'Credenciales inválidas.' };
+    }
+
+    // Normalizar a mayúsculas
+    const normalizedCode = password.trim().toUpperCase();
+
+    if (!verifyPassword(normalizedCode, user.passwordHash)) {
+      return { success: false, message: 'Credenciales inválidas.' };
+    }
+
+    await createSession(user.id);
+    await resetRateLimit(ip, normalizedUsername);
+
+    safeRevalidatePath('/');
+    return { success: true, user: { id: user.id, username: user.username, role: user.role } };
+  } catch (error) {
+    return { success: false, message: 'Error interno de inicio de sesión.' };
+  }
+}
+
+/**
+ * Inicio de sesión de administradores (ADMIN).
+ */
+export async function loginAdminAction(formData: FormData) {
   const ip = await getClientIp();
   const username = (formData.get('username') as string || '').trim();
   const password = formData.get('password') as string;
@@ -187,7 +239,13 @@ export async function loginAction(formData: FormData) {
       where: { normalizedUsername },
     });
 
-    if (!user || !verifyPassword(password, user.passwordHash) || !user.isActive) {
+    // Solo permitir administradores (role ADMIN)
+    if (!user || user.role !== 'ADMIN' || !user.isActive) {
+      return { success: false, message: 'Credenciales inválidas.' };
+    }
+
+    // No se normaliza para ADMIN
+    if (!verifyPassword(password, user.passwordHash)) {
       return { success: false, message: 'Credenciales inválidas.' };
     }
 
@@ -195,7 +253,7 @@ export async function loginAction(formData: FormData) {
     await resetRateLimit(ip, normalizedUsername);
 
     safeRevalidatePath('/');
-    return { success: true };
+    return { success: true, user: { id: user.id, username: user.username, role: user.role } };
   } catch (error) {
     return { success: false, message: 'Error interno de inicio de sesión.' };
   }
@@ -207,10 +265,9 @@ export async function loginAction(formData: FormData) {
 export async function registerAction(formData: FormData) {
   const ip = await getClientIp();
   const username = (formData.get('username') as string || '').trim();
-  const password = formData.get('password') as string;
-  const confirmPassword = formData.get('confirmPassword') as string;
+  const password = formData.get('password') as string; // Código de acceso
 
-  if (!username || !password || !confirmPassword) {
+  if (!username || !password) {
     return { success: false, message: 'Todos los campos son obligatorios.' };
   }
 
@@ -237,12 +294,13 @@ export async function registerAction(formData: FormData) {
     return { success: false, message: 'Este nombre de usuario no está disponible.' };
   }
 
-  if (password.length < 8) {
-    return { success: false, message: 'La contraseña debe tener al menos 8 caracteres.' };
-  }
+  // Normalizar el código de acceso a mayúsculas
+  const normalizedCode = password.trim().toUpperCase();
 
-  if (password !== confirmPassword) {
-    return { success: false, message: 'Las contraseñas no coinciden.' };
+  // Validar código de acceso
+  const validation = validateAccessCode(normalizedCode, username);
+  if (!validation.valid) {
+    return { success: false, message: validation.message };
   }
 
   try {
@@ -252,14 +310,18 @@ export async function registerAction(formData: FormData) {
     });
 
     if (existing) {
-      return { success: false, message: 'El usuario ya existe.' };
+      return {
+        success: false,
+        message: 'Ese nombre ya está en uso',
+        userExists: true
+      };
     }
 
     const created = await prisma.user.create({
       data: {
         username,
         normalizedUsername,
-        passwordHash: hashPassword(password),
+        passwordHash: hashPassword(normalizedCode),
         role: 'USER',
         isActive: true,
       },
@@ -269,7 +331,7 @@ export async function registerAction(formData: FormData) {
     await resetRateLimit(ip, normalizedUsername);
 
     safeRevalidatePath('/');
-    return { success: true };
+    return { success: true, user: { id: created.id, username: created.username, role: created.role } };
   } catch (error) {
     return { success: false, message: 'Error interno al registrar el usuario.' };
   }
@@ -281,7 +343,139 @@ export async function registerAction(formData: FormData) {
 export async function logoutAction() {
   await destroySession();
   safeRevalidatePath('/');
-  redirect('/login');
+  redirect('/');
+}
+
+/**
+ * Cambiar el código de acceso del jugador actual (USER).
+ */
+export async function changeAccessCodeAction(formData: FormData) {
+  const currentCode = formData.get('currentCode') as string || '';
+  const newCode = formData.get('newCode') as string || '';
+  const confirmNewCode = formData.get('confirmNewCode') as string || '';
+
+  if (!currentCode || !newCode || !confirmNewCode) {
+    return { success: false, message: 'Todos los campos son obligatorios.' };
+  }
+
+  if (newCode !== confirmNewCode) {
+    return { success: false, message: 'El nuevo código de acceso y su confirmación no coinciden.' };
+  }
+
+  let user;
+  try {
+    user = await requireUser();
+  } catch (error) {
+    return { success: false, message: 'No estás autorizado.' };
+  }
+
+  const dbUser = await prisma.user.findUnique({
+    where: { id: user.id },
+  });
+
+  if (!dbUser) {
+    return { success: false, message: 'Usuario no encontrado.' };
+  }
+
+  // Normalizar a mayúsculas para USER
+  const isUser = dbUser.role === 'USER';
+  const normalizedCurrent = isUser ? currentCode.trim().toUpperCase() : currentCode;
+
+  if (!verifyPassword(normalizedCurrent, dbUser.passwordHash)) {
+    return { success: false, message: 'El código de acceso actual es incorrecto.' };
+  }
+
+  const normalizedNew = isUser ? newCode.trim().toUpperCase() : newCode;
+
+  if (isUser) {
+    const validation = validateAccessCode(normalizedNew, dbUser.username);
+    if (!validation.valid) {
+      return { success: false, message: validation.message };
+    }
+  }
+
+  try {
+    const newHash = hashPassword(normalizedNew);
+
+    await prisma.user.update({
+      where: { id: dbUser.id },
+      data: { passwordHash: newHash },
+    });
+
+    // Terminar otras sesiones activas del usuario
+    const cookieStore = await cookies();
+    const token = cookieStore.get('quiniela_session')?.value;
+    if (token) {
+      const tokenHash = hashToken(token);
+      await prisma.session.deleteMany({
+        where: {
+          userId: dbUser.id,
+          tokenHash: { not: tokenHash },
+        },
+      });
+    }
+
+    safeRevalidatePath('/');
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: 'Error interno al cambiar el código.' };
+  }
+}
+
+/**
+ * Restablecer el código de acceso de un jugador (ADMIN).
+ */
+export async function resetPlayerAccessCodeAction(formData: FormData) {
+  const username = (formData.get('username') as string || '').trim();
+  const newCode = (formData.get('newCode') as string || '').trim();
+
+  if (!username || !newCode) {
+    return { success: false, message: 'El nombre del jugador y el nuevo código de acceso son obligatorios.' };
+  }
+
+  try {
+    await requireAdmin();
+  } catch (error) {
+    return { success: false, message: 'No estás autorizado. Debes ser administrador.' };
+  }
+
+  const normalizedUsername = username.toLowerCase();
+
+  try {
+    const targetUser = await prisma.user.findUnique({
+      where: { normalizedUsername },
+    });
+
+    if (!targetUser) {
+      return { success: false, message: 'Jugador no encontrado.' };
+    }
+
+    if (targetUser.role !== 'USER') {
+      return { success: false, message: 'Solo se puede restablecer el código de acceso de jugadores standard.' };
+    }
+
+    const normalizedCode = newCode.toUpperCase();
+    const validation = validateAccessCode(normalizedCode, targetUser.username);
+    if (!validation.valid) {
+      return { success: false, message: validation.message };
+    }
+
+    const newHash = hashPassword(normalizedCode);
+
+    await prisma.user.update({
+      where: { id: targetUser.id },
+      data: { passwordHash: newHash },
+    });
+
+    // Forzar logout de todas las sesiones de este jugador
+    await prisma.session.deleteMany({
+      where: { userId: targetUser.id },
+    });
+
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: 'Error interno al restablecer el código.' };
+  }
 }
 
 // --- ACCIONES DE PARTIDOS, PREDICCIONES Y PUNTOS ---
@@ -348,8 +542,8 @@ export async function recalculateMatchScore(matchId: string, userId?: string) {
  * Listar partidos completos con predicción y puntaje para el usuario actual.
  */
 export async function getMatchesWithData() {
-  const user = await requireUser();
-  const userId = user.id;
+  const user = await getCurrentUser();
+  const userId = user?.id || '';
 
   const matches = await prisma.match.findMany({
     include: {

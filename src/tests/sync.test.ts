@@ -246,7 +246,7 @@ describe('Synchronization Engine Tests', () => {
   test('8. Debería fallar la normalización ante datos incompletos en el proveedor', async () => {
     const { ApiFootballProvider: RealProvider } = await vi.importActual<typeof import('../lib/api-football-provider')>('../lib/api-football-provider');
     const provider = new RealProvider();
-    
+
     expect(() => provider.normalizeFixture({})).toThrow('Malformed fixture data from API');
     expect(() => provider.normalizeFixture({ fixture: {} })).toThrow();
   });
@@ -621,7 +621,7 @@ describe('FootballDataProvider Tests', () => {
     const provider = new RealFootballDataProvider();
 
     const fixtures = await provider.fetchTournamentFixtures();
-    
+
     expect(global.fetch).toHaveBeenCalledWith(
       'https://api.test-football.org/competitions/WC/matches?season=2026',
       expect.objectContaining({
@@ -700,7 +700,7 @@ describe('Excel Predictions Import Tests', () => {
   beforeEach(async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-01T00:00:00Z'));
-    
+
     // Clean up tables
     await prisma.score.deleteMany({});
     await prisma.prediction.deleteMany({});
@@ -1078,7 +1078,7 @@ describe('Excel Predictions Import Tests', () => {
     });
 
     expect(dbMatch?.predictions.length).toBe(0);
-    
+
     spy.mockRestore();
   });
 });
@@ -1139,7 +1139,7 @@ describe('Individual Predictions Administrative Tests', () => {
 
     expect(pred?.predictedHomeScore).toBe(2);
     expect(pred?.predictedAwayScore).toBe(1);
-    
+
     // Debería calcular 6 puntos (marcador exacto)
     expect(score?.points).toBe(6);
     expect(score?.reason).toContain('Resultado exacto');

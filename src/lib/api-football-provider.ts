@@ -15,7 +15,7 @@ export class ApiFootballProvider implements FootballResultsProvider {
     }
 
     const url = `${this.baseUrl}${endpoint}`;
-    
+
     try {
       const response = await fetch(url, {
         method: 'GET',
@@ -93,7 +93,7 @@ export class ApiFootballProvider implements FootballResultsProvider {
 
     const externalApiId = fixture.id.toString();
     const stage = this.normalizeStage(league.round);
-    
+
     // Parse Group Name (e.g. "Group Stage - Group A" -> "Grupo A")
     let groupName: string | null = null;
     if (league.round && league.round.toLowerCase().includes('group')) {

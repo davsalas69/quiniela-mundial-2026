@@ -2,13 +2,13 @@
 
 import { useState, useTransition } from 'react';
 import { upsertPrediction } from '../actions';
-import { 
-  Search, 
-  Filter, 
-  Save, 
-  Check, 
-  Clock, 
-  AlertCircle 
+import {
+  Search,
+  Filter,
+  Save,
+  Check,
+  Clock,
+  AlertCircle
 } from 'lucide-react';
 
 interface Prediction {
@@ -76,7 +76,7 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
     let newWinner = draft.winner;
     let newHomePen = draft.homePenalties;
     let newAwayPen = draft.awayPenalties;
-    
+
     if (newHomeScore !== newAwayScore) {
       newWinner = null;
       newHomePen = '';
@@ -108,7 +108,7 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
     const homeVal = parseInt(newHomePen, 10);
     const awayVal = parseInt(newAwayPen, 10);
     const match = matches.find(m => m.id === matchId);
-    
+
     if (match) {
       if (!isNaN(homeVal) && !isNaN(awayVal)) {
         if (homeVal > awayVal) {
@@ -148,7 +148,7 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
     const draft = drafts[matchId];
     const homeScoreVal = draft.homeScore === '' ? null : parseInt(draft.homeScore, 10);
     const awayScoreVal = draft.awayScore === '' ? null : parseInt(draft.awayScore, 10);
-    
+
     let homePenaltiesVal = draft.homePenalties === '' ? null : parseInt(draft.homePenalties, 10);
     let awayPenaltiesVal = draft.awayPenalties === '' ? null : parseInt(draft.awayPenalties, 10);
     let winnerVal = draft.winner;
@@ -222,10 +222,10 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
 
   // Filtrado de partidos
   const filteredMatches = matches.filter((m) => {
-    const matchesSearch = 
-      m.homeTeam.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    const matchesSearch =
+      m.homeTeam.toLowerCase().includes(searchTerm.toLowerCase()) ||
       m.awayTeam.toLowerCase().includes(searchTerm.toLowerCase());
-    
+
     if (selectedStage === 'ALL') return matchesSearch;
     if (selectedStage === 'GROUP_STAGE') return m.stage === 'GROUP_STAGE' && matchesSearch;
     return m.stage !== 'GROUP_STAGE' && matchesSearch; // Final stages
@@ -241,7 +241,7 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
     <div className="space-y-6">
       {/* Search and Filters Header */}
       <div className="p-5 rounded-2xl bg-[#0f0f15]/80 border border-[#1e1e24] flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        
+
         {/* Search Input */}
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
@@ -293,15 +293,15 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
             const isFinalStage = m.stage !== 'GROUP_STAGE';
             const isDraw = draft.homeScore !== '' && draft.awayScore !== '' && draft.homeScore === draft.awayScore;
             const isCompleted = draft.homeScore !== '' && draft.awayScore !== '';
-            
+
             const isHistorical = m.status === 'FINISHED' || m.status === 'MANUAL_PROJECTION';
 
             return (
-              <div 
+              <div
                 key={m.id}
                 className={`p-5 rounded-2xl bg-[#0f0f15]/85 border transition-all duration-300 flex flex-col justify-between ${
-                  draft.isDirty 
-                    ? 'border-[#6d28d9]/60 shadow-lg shadow-[#6d28d9]/5' 
+                  draft.isDirty
+                    ? 'border-[#6d28d9]/60 shadow-lg shadow-[#6d28d9]/5'
                     : 'border-[#1e1e24] hover:border-zinc-800'
                 }`}
               >
@@ -321,7 +321,7 @@ export default function PredictionsClient({ initialMatches }: { initialMatches: 
                         <span className="text-zinc-500 flex items-center space-x-1">
                           <Clock className="h-3 w-3 shrink-0" />
                           <span>
-                            {m.kickoffAt 
+                            {m.kickoffAt
                               ? new Date(m.kickoffAt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
                               : 'Fecha pendiente'
                             }

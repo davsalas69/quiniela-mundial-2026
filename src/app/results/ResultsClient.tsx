@@ -2,13 +2,13 @@
 
 import { useState, useTransition } from 'react';
 import { upsertMatchResult } from '../actions';
-import { 
-  Search, 
-  Save, 
-  Check, 
-  Trash2, 
-  Clock, 
-  AlertTriangle 
+import {
+  Search,
+  Save,
+  Check,
+  Trash2,
+  Clock,
+  AlertTriangle
 } from 'lucide-react';
 
 interface Prediction {
@@ -266,10 +266,10 @@ export default function ResultsClient({ initialMatches }: { initialMatches: Matc
 
   // Filtrado de partidos
   const filteredMatches = matches.filter((m) => {
-    const matchesSearch = 
-      m.homeTeam.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    const matchesSearch =
+      m.homeTeam.toLowerCase().includes(searchTerm.toLowerCase()) ||
       m.awayTeam.toLowerCase().includes(searchTerm.toLowerCase());
-    
+
     if (selectedStage === 'ALL') return matchesSearch;
     if (selectedStage === 'GROUP_STAGE') return m.stage === 'GROUP_STAGE' && matchesSearch;
     return m.stage !== 'GROUP_STAGE' && matchesSearch;
@@ -279,7 +279,7 @@ export default function ResultsClient({ initialMatches }: { initialMatches: Matc
     <div className="space-y-6">
       {/* Search and Filters */}
       <div className="p-5 rounded-2xl bg-[#0f0f15]/80 border border-[#1e1e24] flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        
+
         {/* Search */}
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
@@ -334,13 +334,13 @@ export default function ResultsClient({ initialMatches }: { initialMatches: Matc
             const isFilled = m.actualHomeScore !== null && m.actualAwayScore !== null;
 
             return (
-              <div 
+              <div
                 key={m.id}
                 className={`p-5 rounded-2xl bg-[#0f0f15]/85 border transition-all duration-300 flex flex-col justify-between ${
-                  draft.isDirty 
-                    ? 'border-[#6d28d9]/60 shadow-lg shadow-[#6d28d9]/5' 
-                    : isFilled 
-                    ? 'border-[#1e1e24] hover:border-zinc-800' 
+                  draft.isDirty
+                    ? 'border-[#6d28d9]/60 shadow-lg shadow-[#6d28d9]/5'
+                    : isFilled
+                    ? 'border-[#1e1e24] hover:border-zinc-800'
                     : 'border-[#1e1e24]/60 hover:border-zinc-800'
                 }`}
               >

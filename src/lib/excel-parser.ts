@@ -47,10 +47,10 @@ export function normalizeTeamName(name: string): string {
 export function teamsMatch(dbTeam: string, apiTeam: string): boolean {
   const normDb = normalizeTeamName(dbTeam);
   const normApi = normalizeTeamName(apiTeam);
-  
+
   if (normDb === normApi) return true;
   if (normDb.includes(normApi) || normApi.includes(normDb)) return true;
-  
+
   const teamMappings: Record<string, string[]> = {
     'usa': ['unitedstates', 'eeuu', 'estadosunidos'],
     'mexico': ['mexico', 'mex'],
@@ -112,7 +112,7 @@ export function excelDateToDate(val: any): Date | null {
 
 export function parseExcelBackup(): ExcelMatch[] {
   const filePath = path.join(process.cwd(), 'data', 'Quiniela-Mundial-Juegos.xlsx');
-  
+
   if (!fs.existsSync(filePath)) {
     throw new Error('Archivo de respaldo no encontrado en la ubicación data/Quiniela-Mundial-Juegos.xlsx');
   }
@@ -120,14 +120,14 @@ export function parseExcelBackup(): ExcelMatch[] {
   const workbook = XLSX.readFile(filePath);
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
-  
+
   const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet);
-  
+
   const excelMatches: ExcelMatch[] = [];
-  
+
   for (const row of rawRows) {
     const keys = Object.keys(row);
-    
+
     const homeKey = keys.find(k => k.toLowerCase().includes('local') || k.toLowerCase().includes('home') || k.toLowerCase().includes('equipo 1') || k.toLowerCase().includes('equipo1'));
     const awayKey = keys.find(k => k.toLowerCase().includes('visitante') || k.toLowerCase().includes('away') || k.toLowerCase().includes('equipo 2') || k.toLowerCase().includes('equipo2'));
     const dateKey = keys.find(k => k.toLowerCase().includes('fecha') || k.toLowerCase().includes('date') || k.toLowerCase().includes('kickoff') || k.toLowerCase().includes('hora'));
@@ -137,12 +137,12 @@ export function parseExcelBackup(): ExcelMatch[] {
     if (homeKey && awayKey) {
       const homeTeam = String(row[homeKey]).trim();
       const awayTeam = String(row[awayKey]).trim();
-      
+
       let kickoffAt: Date | null = null;
       if (dateKey && row[dateKey]) {
         kickoffAt = excelDateToDate(row[dateKey]);
       }
-      
+
       let groupName: string | null = null;
       if (groupKey && row[groupKey]) {
         const groupStr = String(row[groupKey]).trim();
@@ -186,8 +186,8 @@ export async function importExcelBackup(): Promise<{ createdCount: number; updat
       where: { stage: 'GROUP_STAGE' }
     });
 
-    const existingMatch = dbMatches.find(db => 
-      teamsMatch(db.homeTeam, excelMatch.homeTeam) && 
+    const existingMatch = dbMatches.find(db =>
+      teamsMatch(db.homeTeam, excelMatch.homeTeam) &&
       teamsMatch(db.awayTeam, excelMatch.awayTeam)
     );
 
@@ -233,7 +233,7 @@ export async function importExcelBackup(): Promise<{ createdCount: number; updat
 
 export async function compareDatabaseWithExcel(): Promise<ComparisonReport> {
   const excelMatches = parseExcelBackup();
-  
+
   const dbMatches = await prisma.match.findMany({
     orderBy: { kickoffAt: 'asc' }
   });
@@ -253,7 +253,7 @@ export async function compareDatabaseWithExcel(): Promise<ComparisonReport> {
     } else {
       matchedCount++;
       const diffs: string[] = [];
-      
+
       if (excelMatch.kickoffAt && dbMatch.kickoffAt) {
         const timeDiff = Math.abs(excelMatch.kickoffAt.getTime() - dbMatch.kickoffAt.getTime());
         if (timeDiff > 2 * 60 * 60 * 1000) {
@@ -800,7 +800,7 @@ export function matchPredictionToMatch(row: NormalizedPredictionRow, dbMatches: 
 
 export async function previewPredictionImport(buffer: Buffer, userId: string): Promise<PredictionPreviewReport> {
   const { rows, sheetName } = parsePredictionWorkbook(buffer);
-  
+
   let headerIndex = -1;
   let isOfficial = false;
 
@@ -979,7 +979,7 @@ export async function previewPredictionImport(buffer: Buffer, userId: string): P
         const action = dbMatch.prediction ? 'UPDATE_RECALCULATE' : 'CREATE_RECALCULATE';
         if (action === 'CREATE_RECALCULATE') newHistoryCount++;
         else updateHistoryCount++;
-        
+
         if (dbMatch.actualHomeScore !== null && dbMatch.actualAwayScore !== null) {
           recalculatedCount++;
         }

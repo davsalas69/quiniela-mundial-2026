@@ -42,8 +42,8 @@ export default function ScoresClient({ initialMatches }: { initialMatches: Match
   const resolvedMatches = initialMatches.filter(m => m.score !== null);
 
   const filteredMatches = resolvedMatches.filter((m) => {
-    const matchesSearch = 
-      m.homeTeam.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    const matchesSearch =
+      m.homeTeam.toLowerCase().includes(searchTerm.toLowerCase()) ||
       m.awayTeam.toLowerCase().includes(searchTerm.toLowerCase());
 
     if (!matchesSearch) return false;
@@ -54,7 +54,7 @@ export default function ScoresClient({ initialMatches }: { initialMatches: Match
     if (filterPoints === 'WINNER') return points === 5 || points === 4;
     if (filterPoints === 'MINIMAL') return points === 1;
     if (filterPoints === 'ZERO') return points === 0;
-    
+
     return true;
   });
 
@@ -79,7 +79,7 @@ export default function ScoresClient({ initialMatches }: { initialMatches: Match
     <div className="space-y-6">
       {/* Search and Filters Header */}
       <div className="p-5 rounded-2xl bg-[#0f0f15]/80 border border-[#1e1e24] flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        
+
         {/* Search Input */}
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
@@ -120,7 +120,7 @@ export default function ScoresClient({ initialMatches }: { initialMatches: Match
       <div className="space-y-4">
         {filteredMatches.length === 0 ? (
           <div className="p-12 text-center rounded-2xl border border-dashed border-[#1e1e24] text-zinc-500 font-semibold text-sm">
-            {resolvedMatches.length === 0 
+            {resolvedMatches.length === 0
               ? 'Aún no se ha calculado ningún puntaje. Carga resultados para ver detalles.'
               : 'No se encontraron partidos resueltos con el filtro seleccionado.'
             }
@@ -128,11 +128,11 @@ export default function ScoresClient({ initialMatches }: { initialMatches: Match
         ) : (
           filteredMatches.map((m) => {
             if (!m.score) return null;
-            
+
             const isSimulated = m.resultSource === 'MANUAL_SIMULATION';
 
             return (
-              <div 
+              <div
                 key={m.id}
                 className="p-5 rounded-2xl bg-[#0f0f15]/85 border border-[#1e1e24] hover:border-zinc-800 transition-all duration-200 flex flex-col md:flex-row md:items-center justify-between gap-6"
               >
@@ -161,7 +161,7 @@ export default function ScoresClient({ initialMatches }: { initialMatches: Match
                       <div className="px-2 py-0.5 rounded bg-[#13131a] text-white font-black text-xs border border-[#1e1e24]">
                         {m.actualHomeScore} - {m.actualAwayScore}
                       </div>
-                      
+
                       {/* Prediction label */}
                       <div className="text-[10px] text-zinc-500 font-medium whitespace-nowrap">
                         Pred: {m.prediction?.predictedHomeScore} - {m.prediction?.predictedAwayScore}
@@ -178,11 +178,11 @@ export default function ScoresClient({ initialMatches }: { initialMatches: Match
                   {(m.actualHomeScore === m.actualAwayScore && m.stage !== 'GROUP_STAGE') && (
                     <div className="p-2.5 rounded-xl bg-zinc-950/60 border border-zinc-900/60 text-[10px] text-zinc-500 max-w-xl flex justify-between">
                       <span>
-                        Ganador Real: <span className="font-bold text-zinc-300">{m.actualWinner}</span> 
+                        Ganador Real: <span className="font-bold text-zinc-300">{m.actualWinner}</span>
                         {m.actualHomePenalties !== null && ` (Pen: ${m.actualHomePenalties}-${m.actualAwayPenalties})`}
                       </span>
                       <span>
-                        Pred: <span className="font-bold text-zinc-300">{m.prediction?.predictedWinner ?? '-'}</span> 
+                        Pred: <span className="font-bold text-zinc-300">{m.prediction?.predictedWinner ?? '-'}</span>
                         {m.prediction?.predictedHomePenalties !== null && ` (Pen: ${m.prediction?.predictedHomePenalties}-${m.prediction?.predictedAwayPenalties})`}
                       </span>
                     </div>

@@ -9,6 +9,19 @@ const SCRYPT_P = 1;
 const HASH_VERSION = 'v1';
 
 /**
+ * NOTA DE SEGURIDAD Y MODELO DE DATOS:
+ *
+ * La columna `passwordHash` en el modelo `User` se reutiliza para ambos roles:
+ * - Para usuarios con rol `ADMIN`: almacena el hash scrypt de su contraseña tradicional sensible a mayúsculas/minúsculas.
+ * - Para usuarios con rol `USER` (jugadores): almacena el hash scrypt de su código de acceso normalizado en MAYÚSCULAS.
+ *
+ * Los flujos de autenticación están estrictamente separados en el backend (loginAction vs loginAdminAction)
+ * para evitar que un usuario regular acceda como administrador o viceversa.
+ */
+
+export { generateSuggestedCode, validateAccessCode } from './auth-shared';
+
+/**
  * Hashea una contraseña usando scrypt con parámetros de coste explícitos y salt aleatorio.
  * Retorna el hash en formato versionado: version$N$r$p$salt$hash
  */

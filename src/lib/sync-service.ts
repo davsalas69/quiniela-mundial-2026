@@ -17,7 +17,7 @@ export async function syncTournament(syncType: 'FULL' | 'DAILY' | 'LIVE' | 'MANU
   const startedAt = new Date();
   const providerType = process.env.FOOTBALL_PROVIDER || 'football-data';
   const providerName = providerType === 'api-football' ? 'API-Football' : 'football-data.org';
-  
+
   // 1. Protection against concurrent runs: Check for active syncs in the last 5 minutes
   const activeSync = await prisma.syncLog.findFirst({
     where: {
@@ -153,7 +153,7 @@ export async function processNormalizedFixture(fixture: NormalizedFixture): Prom
 
     if (candidates.length === 1) {
       const matchToBind = candidates[0];
-      
+
       // Update externalApiId in database, preserving predictions and scores by keeping the same row
       await prisma.match.update({
         where: { id: matchToBind.id },
