@@ -29,22 +29,31 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   // Obtener estadísticas en tiempo real para la barra lateral
-  const totalPointsAgg = await prisma.score.aggregate({
-    _sum: {
-      points: true
-    }
-  });
-  const totalPoints = totalPointsAgg._sum.points ?? 0;
+  let totalPoints = 0;
+  let totalPredictions = 0;
+  let totalMatches = 0;
+  let finishedMatches = 0;
 
-  const totalPredictions = await prisma.prediction.count();
-  const totalMatches = await prisma.match.count();
-  const finishedMatches = await prisma.match.count({
-    where: {
-      status: {
-        in: ['FINISHED', 'MANUAL_PROJECTION']
+  try {
+    const totalPointsAgg = await prisma.score.aggregate({
+      _sum: {
+        points: true
       }
-    }
-  });
+    });
+    totalPoints = totalPointsAgg._sum.points ?? 0;
+
+    totalPredictions = await prisma.prediction.count();
+    totalMatches = await prisma.match.count();
+    finishedMatches = await prisma.match.count({
+      where: {
+        status: {
+          in: ['FINISHED', 'MANUAL_PROJECTION']
+        }
+      }
+    });
+  } catch (error) {
+    console.warn("Failed to fetch sidebar stats from database:", error instanceof Error ? error.message : String(error));
+  }
 
   const navItems = [
     { href: '/', label: 'Dashboard', icon: LayoutDashboard },
