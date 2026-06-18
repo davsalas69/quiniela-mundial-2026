@@ -120,8 +120,10 @@ export default async function RootLayout({
                     <Trophy className="h-6 w-6" />
                   </div>
                   <div>
-                    <h1 className="font-extrabold text-lg tracking-tight bg-gradient-to-r from-white via-zinc-200 to-zinc-400 bg-clip-text text-transparent">
-                      QUINIELA 2026
+                    <h1 className="font-extrabold text-lg tracking-tight text-white">
+                      <span>QUINIELA </span>
+                      <span className="text-[#F26424]">EL PILAR</span>
+                      <span> 2026</span>
                     </h1>
                     <p className="text-xs text-zinc-500 font-medium">Panel Personal</p>
                   </div>

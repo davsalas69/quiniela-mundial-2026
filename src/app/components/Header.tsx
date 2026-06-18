@@ -54,7 +54,9 @@ export default function Header() {
           </div>
           <div>
             <h1 className="md:hidden font-black text-sm tracking-widest text-white uppercase">
-              Quiniela 2026
+              <span>Quiniela </span>
+              <span className="text-[#F26424]">El Pilar</span>
+              <span> 2026</span>
             </h1>
             <span className="hidden md:inline-block text-xs font-extrabold uppercase tracking-widest text-zinc-500">
               Copa del Mundo FIFA 2026
