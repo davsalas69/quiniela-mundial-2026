@@ -21,11 +21,22 @@ import {
 } from '@/lib/auth';
 import { checkRateLimit, resetRateLimit } from '@/lib/rate-limit';
 import { headers, cookies } from 'next/headers';
+import { getLeaderboardData } from '@/lib/leaderboard';
 
 // Auxiliar para revalidar caché en Next.js
 function safeRevalidatePath(path: string) {
   try {
     revalidatePath(path);
+    if (
+      path === '/' ||
+      path === '/predictions' ||
+      path === '/results' ||
+      path === '/scores' ||
+      path === '/settings'
+    ) {
+      revalidatePath('/leaderboard', 'layout');
+      revalidatePath('/players', 'layout');
+    }
   } catch (error) {
     // Ignorar fuera del contexto del servidor de Next.js (ej: en tests CLI)
   }
@@ -1295,4 +1306,132 @@ export async function confirmPredictionImportAction(formData: FormData) {
       message: err.message || 'Error al confirmar la importación de predicciones',
     };
   }
+}
+
+/**
+ * Activa o desactiva la cuenta de un jugador (isActive) (Requiere Admin).
+ * También invalida las sesiones del jugador desactivado y evita la autodesactivación o
+ * desactivar la última cuenta de administrador.
+ */
+export async function togglePlayerStatusAction(userId: string, isActive: boolean) {
+  const currentAdmin = await requireAdmin();
+
+  if (userId === currentAdmin.id) {
+    return { success: false, message: 'No puedes desactivar tu propia cuenta de administrador.' };
+  }
+
+  const targetUser = await prisma.user.findUnique({ where: { id: userId } });
+  if (!targetUser) {
+    return { success: false, message: 'Usuario no encontrado.' };
+  }
+
+  // Si se está desactivando un administrador, asegurar que no sea el único
+  if (targetUser.role === 'ADMIN' && !isActive) {
+    const activeAdminsCount = await prisma.user.count({
+      where: { role: 'ADMIN', isActive: true },
+    });
+    if (activeAdminsCount <= 1) {
+      return { success: false, message: 'No puedes desactivar la única cuenta de administrador activa.' };
+    }
+  }
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { isActive },
+  });
+
+  // Si desactivamos, invalidar todas las sesiones
+  if (!isActive) {
+    await prisma.session.deleteMany({
+      where: { userId },
+    });
+  }
+
+  safeRevalidatePath('/players');
+  safeRevalidatePath('/leaderboard');
+
+  return { success: true };
+}
+
+/**
+ * Restablece el código de acceso de un jugador por su ID (Requiere Admin).
+ * Solo se puede ejecutar sobre cuentas de rol USER. Invalida todas las sesiones de dicho usuario.
+ */
+export async function resetPlayerAccessCodeByIdAction(userId: string, newCode: string) {
+  await requireAdmin();
+
+  const targetUser = await prisma.user.findUnique({ where: { id: userId } });
+  if (!targetUser) {
+    return { success: false, message: 'Usuario no encontrado.' };
+  }
+
+  if (targetUser.role !== 'USER') {
+    return { success: false, message: 'Solo se puede restablecer el código de acceso de jugadores standard (USER).' };
+  }
+
+  const normalizedCode = newCode.trim().toUpperCase();
+  const validation = validateAccessCode(normalizedCode, targetUser.username);
+  if (!validation.valid) {
+    return { success: false, message: validation.message };
+  }
+
+  const newHash = hashPassword(normalizedCode);
+  await prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash: newHash },
+  });
+
+  // Invalida sesiones
+  await prisma.session.deleteMany({
+    where: { userId },
+  });
+
+  safeRevalidatePath('/players');
+  safeRevalidatePath('/leaderboard');
+
+  return { success: true };
+}
+
+/**
+ * Exporta la lista de jugadores y estadísticas en formato CSV (Requiere Admin).
+ */
+export async function exportPlayersCSVAction() {
+  await requireAdmin();
+
+  const players = await getLeaderboardData();
+
+  const headersList = [
+    'Posición',
+    'Jugador',
+    'Estado',
+    'Puntos',
+    'Exactos',
+    'Tendencia + Total',
+    'Tendencia',
+    'Total de Goles',
+    'Partidos Puntuados',
+    'Pendientes',
+    'Fecha de Registro'
+  ];
+
+  const csvRows = [headersList.join(',')];
+
+  for (const p of players) {
+    const row = [
+      p.position,
+      `"${p.username.replace(/"/g, '""')}"`,
+      p.isActive ? 'Activo' : 'Inactivo',
+      p.totalPoints,
+      p.exacts,
+      p.tendencyPlusTotal,
+      p.tendency,
+      p.totalGoals,
+      p.scoredCount,
+      p.pendingCount,
+      p.createdAt.toISOString().split('T')[0]
+    ];
+    csvRows.push(row.join(','));
+  }
+
+  return csvRows.join('\n');
 }

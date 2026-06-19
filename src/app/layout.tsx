@@ -15,7 +15,8 @@ import {
   PenTool,
   CheckSquare,
   Award,
-  Settings
+  Settings,
+  Users
 } from 'lucide-react';
 
 const outfit = Outfit({
@@ -95,12 +96,14 @@ export default async function RootLayout({
   // 3. Filtrar enlaces de navegación según rol
   const navItems = [
     { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+    { href: '/leaderboard', label: 'Tabla de posiciones', icon: Trophy },
     { href: '/predictions', label: 'Predicciones', icon: PenTool },
     { href: '/scores', label: 'Mis Puntos', icon: Award },
   ];
 
   if (user && user.role === 'ADMIN') {
     navItems.push(
+      { href: '/players', label: 'Jugadores', icon: Users },
       { href: '/results', label: 'Resultados', icon: CheckSquare },
       { href: '/settings', label: 'Configuración', icon: Settings }
     );

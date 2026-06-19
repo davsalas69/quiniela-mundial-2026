@@ -112,6 +112,15 @@ export default function Header() {
                     <span>Mi Quiniela</span>
                   </Link>
 
+                  <Link
+                    href="/leaderboard"
+                    onClick={() => setDropdownOpen(false)}
+                    className="flex items-center space-x-2 px-4 py-2 text-xs font-bold text-zinc-300 hover:text-white hover:bg-zinc-800/40 transition-colors"
+                  >
+                    <Trophy className="h-4 w-4 text-zinc-500" />
+                    <span>Tabla de posiciones</span>
+                  </Link>
+
                   <a
                     href="/api/predictions/template"
                     onClick={() => setDropdownOpen(false)}
@@ -156,6 +165,24 @@ export default function Header() {
                   >
                     <LayoutDashboard className="h-4 w-4 text-zinc-500" />
                     <span>Dashboard</span>
+                  </Link>
+
+                  <Link
+                    href="/leaderboard"
+                    onClick={() => setDropdownOpen(false)}
+                    className="flex items-center space-x-2 px-4 py-2 text-xs font-bold text-zinc-300 hover:text-white hover:bg-zinc-800/40 transition-colors"
+                  >
+                    <Trophy className="h-4 w-4 text-zinc-500" />
+                    <span>Tabla de posiciones</span>
+                  </Link>
+
+                  <Link
+                    href="/players"
+                    onClick={() => setDropdownOpen(false)}
+                    className="flex items-center space-x-2 px-4 py-2 text-xs font-bold text-zinc-300 hover:text-white hover:bg-zinc-800/40 transition-colors"
+                  >
+                    <User className="h-4 w-4 text-zinc-500" />
+                    <span>Jugadores</span>
                   </Link>
 
                   <Link
